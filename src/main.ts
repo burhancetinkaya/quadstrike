@@ -395,6 +395,7 @@ const openSessionDialog = (mode: 'practice' | 'host' | 'join'): void => {
   sessionRoomIdInput.value = lastRoomId;
   sessionMatchSizeSelect.value = String(lastMatchSize);
   sessionMatchSizeField.hidden = mode === 'join';
+  sessionMatchSizeSelect.disabled = mode === 'join';
   sessionRoomIdField.hidden = mode === 'practice';
   if (mode === 'practice') {
     sessionModalEyebrow.textContent = 'Practice Mode';
@@ -410,7 +411,7 @@ const openSessionDialog = (mode: 'practice' | 'host' | 'join'): void => {
     sessionModalEyebrow.textContent = 'Join Multiplayer Match';
     sessionModalTitle.textContent = 'Connect to an existing room';
     sessionModalCopy.textContent =
-      `Enter the same room code as the host. QuadStrike will use the configured signaling server at ${FRONTEND_CONFIG.signalingUrl} and try to attach to the live session.`;
+      `Enter the same room code as the host. QuadStrike will detect the room size automatically and connect only if that room already exists on ${FRONTEND_CONFIG.signalingUrl}.`;
   }
   sessionModalFeedback.dataset.state = 'neutral';
   sessionModalFeedback.textContent =

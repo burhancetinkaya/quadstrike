@@ -1,4 +1,4 @@
-import type { MatchSize, PlayerId } from '../game/types';
+import type { MatchSize, PlayerId, SessionMode } from '../game/types';
 
 export interface PeerRosterEntry {
   peerId: string;
@@ -51,6 +51,7 @@ export class SignalingClient {
     url: string,
     roomId: string,
     peerId: string,
+    requestedMode: SessionMode,
     matchSize?: MatchSize,
   ): Promise<Extract<SignalingMessage, { type: 'joined' }>> {
     this.close();
@@ -74,7 +75,8 @@ export class SignalingClient {
             type: 'join',
             roomId,
             peerId,
-            matchSize,
+            requestedMode,
+            matchSize: requestedMode === 'host' ? matchSize : undefined,
           }),
         );
       });

@@ -131,7 +131,7 @@ export class MatchNetwork {
 
   private async joinRoom(url: string, roomId: string, requestedMode: SessionMode, matchSize?: MatchSize): Promise<SessionInfo> {
     const peerId = crypto.randomUUID();
-    const joined = await this.signaling.connect(url, roomId, peerId, matchSize);
+    const joined = await this.signaling.connect(url, roomId, peerId, requestedMode, matchSize);
     if (requestedMode === 'host' && !joined.isHost) {
       this.signaling.leave();
       throw new Error(`Room ${joined.roomId} already has a host. Join it as a client instead.`);
@@ -155,15 +155,11 @@ export class MatchNetwork {
     this.updateConnectedPeers();
     this.callbacks.onSession(this.sessionInfo, this.peers);
 
-    if (joined.isHost && requestedMode === 'client') {
-      this.callbacks.onStatus(`No host existed in room ${joined.roomId}. You were promoted to host.`);
-    } else {
-      this.callbacks.onStatus(
-        joined.isHost
-          ? `Hosting a ${joined.matchSize}P room ${joined.roomId}.`
-          : `Joined room ${joined.roomId} as ${this.describePlayer(joined.playerId)}.`,
-      );
-    }
+    this.callbacks.onStatus(
+      joined.isHost
+        ? `Hosting a ${joined.matchSize}P room ${joined.roomId}.`
+        : `Joined room ${joined.roomId} as ${this.describePlayer(joined.playerId)}.`,
+    );
 
     return this.sessionInfo;
   }

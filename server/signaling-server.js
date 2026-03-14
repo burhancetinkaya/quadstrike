@@ -21,6 +21,17 @@ const getRoom = (roomId) => {
   return room;
 };
 
+const createRoom = (roomId) => {
+  const room = {
+    peers: new Map(),
+    playerAssignments: new Map(),
+    hostPeerId: null,
+    matchSize: 4,
+  };
+  rooms.set(roomId, room);
+  return room;
+};
+
 const sendJson = (socket, payload) => {
   if (socket.readyState === OPEN) {
     socket.send(JSON.stringify(payload));
@@ -68,6 +79,7 @@ wss.on('connection', (socket) => {
     if (message.type === 'join') {
       roomId = String(message.roomId ?? '').trim().toUpperCase();
       peerId = String(message.peerId ?? '').trim();
+      const requestedMode = message.requestedMode === 'host' ? 'host' : 'client';
       const requestedMatchSize = message.matchSize === 2 ? 2 : message.matchSize === 4 ? 4 : null;
 
       if (!roomId || !peerId) {
@@ -75,7 +87,15 @@ wss.on('connection', (socket) => {
         return;
       }
 
-      const room = getRoom(roomId);
+      let room = rooms.get(roomId);
+      if (!room) {
+        if (requestedMode === 'client') {
+          sendJson(socket, { type: 'error', message: `Room ${roomId} was not found.` });
+          return;
+        }
+        room = createRoom(roomId);
+      }
+
       if (room.peers.size === 0 && requestedMatchSize) {
         room.matchSize = requestedMatchSize;
       }

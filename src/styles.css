@@ -68,6 +68,10 @@ select {
   font: inherit;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 #app {
   min-height: 100vh;
 }
@@ -822,17 +826,44 @@ select {
 @media (max-width: 1080px) {
   .layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-items: start;
   }
 
   .control-card {
-    order: -1;
+    order: 0;
+    padding: 16px 18px;
+    gap: 12px;
+  }
+
+  .button-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .button-row button {
+    min-height: 42px;
+  }
+
+  .game-frame {
+    min-height: min(68vh, 560px);
+  }
+
+  .footer-status {
+    min-height: auto;
   }
 }
 
 @media (max-width: 720px) {
+  .shell {
+    gap: 12px;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
   .topbar {
     flex-direction: column;
     align-items: flex-start;
+    padding: 14px 16px;
   }
 
   .topbar-status {
@@ -843,6 +874,7 @@ select {
   .scoreboard {
     width: calc(100% - 160px);
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .match-clock {
@@ -851,8 +883,71 @@ select {
     font-size: 1.3rem;
   }
 
+  .control-card {
+    padding: 14px 16px;
+    gap: 10px;
+  }
+
+  .card-title,
+  .session-intro {
+    display: none;
+  }
+
+  .button-row {
+    gap: 8px;
+  }
+
+  .button-row button {
+    min-height: 40px;
+    font-size: 0.92rem;
+  }
+
+  .game-frame {
+    min-height: min(64vh, 460px);
+  }
+
   .modal-actions {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 560px) {
+  .shell {
+    gap: 10px;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .topbar {
+    padding: 12px 14px;
+  }
+
+  .brand p,
+  .session-intro {
+    display: none;
+  }
+
+  .layout {
+    gap: 10px;
+  }
+
+  .control-card {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .button-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .button-row button {
+    min-height: 38px;
+    font-size: 0.9rem;
+  }
+
+  .game-frame {
+    min-height: min(62vh, 400px);
   }
 }
 
