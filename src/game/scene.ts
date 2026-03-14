@@ -304,10 +304,8 @@ export class ArenaScene extends Phaser.Scene {
 
   private drawCenterMarkings(): void {
     const center = this.project({ x: 0, y: 0 }, 6);
-    this.fieldGraphics.lineStyle(3, 0xf8fafc, 0.16);
+    this.fieldGraphics.lineStyle(3, 0xf8fafc, 0.18);
     this.fieldGraphics.strokeEllipse(center.x, center.y, 226 * this.objectScale, 96 * this.objectScale);
-    this.fieldGraphics.lineStyle(1.5, 0xffffff, 0.1);
-    this.fieldGraphics.strokeEllipse(center.x, center.y, 160 * this.objectScale, 68 * this.objectScale);
     this.fieldGraphics.fillStyle(0xf8fafc, 0.82);
     this.fieldGraphics.fillCircle(center.x, center.y, 5 * this.objectScale);
   }
@@ -477,19 +475,27 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawPitchBands(): void {
-    [-280, -180, -80, 80, 180, 280].forEach((y, index) => {
+    const bandEdges = [-ARENA_HALF_SIZE, -280, -180, -80, 80, 180, 280, ARENA_HALF_SIZE];
+    bandEdges.slice(0, -1).forEach((fromY, index) => {
+      const toY = bandEdges[index + 1];
+      const topSpan = this.getHorizontalSpan(fromY);
+      const bottomSpan = this.getHorizontalSpan(toY);
+      const bandPoints = [
+        this.project({ x: topSpan.from, y: fromY }, 3),
+        this.project({ x: topSpan.to, y: fromY }, 3),
+        this.project({ x: bottomSpan.to, y: toY }, 3),
+        this.project({ x: bottomSpan.from, y: toY }, 3),
+      ];
+      this.fillPolygon(this.fieldGraphics, bandPoints, index % 2 === 0 ? 0x18432b : 0x102f20, index % 2 === 0 ? 0.18 : 0.1);
+    });
+
+    [-280, -180, -80, 80, 180, 280].forEach((y) => {
       const span = this.getHorizontalSpan(y);
       const from = this.project({ x: span.from, y }, 2);
       const to = this.project({ x: span.to, y }, 2);
-      this.drawProjectedSegment(from, to, 0xf8fafc, index % 2 === 0 ? 2 : 1.5, index % 2 === 0 ? 0.075 : 0.05);
+      this.drawProjectedSegment(from, to, 0xf8fafc, 1.5, 0.055);
     });
 
-    [-240, 240].forEach((x) => {
-      const span = this.getVerticalSpan(x);
-      const from = this.project({ x, y: span.from }, 2);
-      const to = this.project({ x, y: span.to }, 2);
-      this.drawProjectedSegment(from, to, 0xffffff, 1.5, 0.05);
-    });
   }
 
   private drawFieldAxes(): void {
@@ -497,15 +503,6 @@ export class ArenaScene extends Phaser.Scene {
     this.drawProjectedSegment(
       this.project({ x: horizontal.from, y: 0 }, 6),
       this.project({ x: horizontal.to, y: 0 }, 6),
-      0xffffff,
-      2,
-      0.1,
-    );
-
-    const vertical = this.getVerticalSpan(0);
-    this.drawProjectedSegment(
-      this.project({ x: 0, y: vertical.from }, 6),
-      this.project({ x: 0, y: vertical.to }, 6),
       0xffffff,
       2,
       0.1,
