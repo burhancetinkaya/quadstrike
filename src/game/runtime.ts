@@ -1,4 +1,17 @@
-import { NETWORK_SEND_HZ, PLAYER_DEFINITIONS, SIMULATION_HZ } from './constants';
+import {
+  ARENA_HALF_SIZE,
+  BALL_RADIUS,
+  BOOST_CONTACT_EPSILON,
+  CHAMFER_SIZE,
+  NETWORK_SEND_HZ,
+  PLAYER_DEFINITIONS,
+  PLAYER_RADIUS,
+  PRACTICE_STUCK_PLAYER_MARGIN,
+  PRACTICE_STUCK_SPEED_EPSILON,
+  PRACTICE_STUCK_TIMEOUT_MS,
+  PRACTICE_STUCK_WALL_MARGIN,
+  SIMULATION_HZ,
+} from './constants';
 import { ClientReplica } from './clientReplica';
 import { MatchSimulation } from './simulation';
 import type { GameSnapshot, InputFrame, NetworkStats, PlayerId, SessionInfo } from './types';
@@ -59,43 +72,35 @@ export class MatchRuntime {
 
   private remoteInputs: InputFrame[] = [];
 
+  private practiceServeIndex = 0;
+
+  private practiceTrapElapsedMs = 0;
+
+  private practiceActive = false;
+
   constructor(private readonly callbacks: RuntimeCallbacks) {
-    this.startPractice();
+    this.resetLocalPractice(false);
+    this.callbacks.onStatus('Select Practice or Multiplayer to begin.');
   }
 
   startPractice(): void {
-    this.network.close();
-    this.simulation = new MatchSimulation();
-    PLAYER_DEFINITIONS.forEach((player) => this.simulation.setPlayerConnected(player.id, true));
-    this.sessionInfo.mode = 'practice';
-    this.sessionInfo.roomId = null;
-    this.sessionInfo.peerId = 'local-practice';
-    this.sessionInfo.isHost = true;
-    this.sessionInfo.localPlayerId = 0;
-    this.replica = new ClientReplica(0);
-    this.fixedAccumulator = 0;
-    this.sendAccumulator = 0;
-    this.localSequence = 0;
-    this.localAxis = 0;
-    this.boostQueued = false;
-    this.remoteInputs = [];
-    this.lastReceivedSnapshot = null;
-    this.renderSnapshot = this.simulation.getSnapshot();
-    this.callbacks.onSession({ ...this.sessionInfo });
-    this.callbacks.onSnapshot(this.renderSnapshot);
+    this.resetLocalPractice(true);
     this.callbacks.onStatus('Practice mode is live. Use A/D or Left/Right to move and Space to boost.');
   }
 
   async startHost(url: string, roomId: string): Promise<void> {
+    this.practiceActive = false;
     await this.network.startHost(url, roomId);
   }
 
   async startClient(url: string, roomId: string): Promise<void> {
+    this.practiceActive = false;
     await this.network.startClient(url, roomId);
   }
 
   leaveSession(): void {
-    this.startPractice();
+    this.resetLocalPractice(false);
+    this.callbacks.onStatus('Session closed. Choose Practice or Multiplayer to continue.');
   }
 
   setMovementAxis(axis: -1 | 0 | 1): void {
@@ -112,6 +117,10 @@ export class MatchRuntime {
 
   update(deltaMs: number): void {
     if (this.paused) {
+      return;
+    }
+
+    if (this.sessionInfo.mode === 'practice' && !this.practiceActive) {
       return;
     }
 
@@ -145,10 +154,42 @@ export class MatchRuntime {
     return this.network.getStats();
   }
 
+  private resetLocalPractice(startPlaying: boolean): void {
+    this.network.close();
+    this.simulation = new MatchSimulation();
+    PLAYER_DEFINITIONS.forEach((player) => this.simulation.setPlayerConnected(player.id, true));
+    this.sessionInfo.mode = 'practice';
+    this.sessionInfo.roomId = null;
+    this.sessionInfo.peerId = 'local-practice';
+    this.sessionInfo.isHost = true;
+    this.sessionInfo.localPlayerId = 0;
+    this.replica = new ClientReplica(0);
+    this.fixedAccumulator = 0;
+    this.sendAccumulator = 0;
+    this.localSequence = 0;
+    this.localAxis = 0;
+    this.boostQueued = false;
+    this.remoteInputs = [];
+    this.lastReceivedSnapshot = null;
+    this.practiceServeIndex = 0;
+    this.practiceTrapElapsedMs = 0;
+    this.practiceActive = startPlaying;
+    this.renderSnapshot = this.simulation.getSnapshot();
+    if (startPlaying) {
+      this.kickoffPracticeBall();
+    }
+    this.callbacks.onSession({ ...this.sessionInfo });
+    this.renderSnapshot = this.simulation.getSnapshot();
+    this.callbacks.onSnapshot(this.renderSnapshot);
+  }
+
   private updateAuthoritative(deltaMs: number): void {
     this.fixedAccumulator += deltaMs;
     while (this.fixedAccumulator >= FIXED_STEP_MS) {
       this.simulation.applyInput(this.buildInputFrame());
+      if (this.sessionInfo.mode === 'practice') {
+        this.applyPracticeBots();
+      }
 
       while (this.remoteInputs.length > 0) {
         const remote = this.remoteInputs.shift();
@@ -157,7 +198,10 @@ export class MatchRuntime {
         }
       }
 
-      const snapshot = this.simulation.step(FIXED_STEP_MS, performance.now());
+      let snapshot = this.simulation.step(FIXED_STEP_MS, performance.now());
+      if (this.sessionInfo.mode === 'practice') {
+        snapshot = this.ensurePracticeBallIsLive(snapshot);
+      }
       this.renderSnapshot = snapshot;
       this.callbacks.onSnapshot(snapshot);
 
@@ -204,6 +248,101 @@ export class MatchRuntime {
     this.localSequence += 1;
     this.boostQueued = false;
     return input;
+  }
+
+  private applyPracticeBots(): void {
+    const snapshot = this.simulation.getSnapshot();
+
+    PLAYER_DEFINITIONS.forEach((definition) => {
+      if (definition.id === this.sessionInfo.localPlayerId) {
+        return;
+      }
+
+      const player = snapshot.players[definition.id];
+      const target = definition.axis === 'x' ? snapshot.ball.x : snapshot.ball.y;
+      const delta = target - player.railPosition;
+      const axis: -1 | 0 | 1 = Math.abs(delta) < 12 ? 0 : delta > 0 ? 1 : -1;
+      const distanceToBall = Math.hypot(
+        snapshot.ball.x - (definition.axis === 'x' ? player.railPosition : definition.fixedCoord),
+        snapshot.ball.y - (definition.axis === 'x' ? definition.fixedCoord : player.railPosition),
+      );
+
+      this.simulation.applyInput({
+        playerId: definition.id,
+        sequence: 0,
+        axis,
+        boost: distanceToBall <= PLAYER_RADIUS + BALL_RADIUS + BOOST_CONTACT_EPSILON && player.boostCooldownMs <= 0,
+        clientTime: Math.round(performance.now()),
+      });
+    });
+  }
+
+  private ensurePracticeBallIsLive(snapshot: GameSnapshot): GameSnapshot {
+    if (this.isPracticeBallTrapped(snapshot)) {
+      this.practiceTrapElapsedMs += FIXED_STEP_MS;
+      if (this.practiceTrapElapsedMs >= PRACTICE_STUCK_TIMEOUT_MS) {
+        this.kickoffPracticeBall();
+        this.practiceTrapElapsedMs = 0;
+        return this.simulation.getSnapshot();
+      }
+    } else {
+      this.practiceTrapElapsedMs = 0;
+    }
+
+    const speed = Math.hypot(snapshot.ball.vx, snapshot.ball.vy);
+    const centered = Math.abs(snapshot.ball.x) < 1 && Math.abs(snapshot.ball.y) < 1;
+    if (snapshot.phase === 'playing' && centered && speed < 0.05) {
+      this.kickoffPracticeBall();
+      this.practiceTrapElapsedMs = 0;
+      return this.simulation.getSnapshot();
+    }
+    return snapshot;
+  }
+
+  private kickoffPracticeBall(): void {
+    const directions = [
+      { x: 11.5, y: 7.2 },
+      { x: -11.2, y: 7.6 },
+      { x: 10.8, y: -7.9 },
+      { x: -11.7, y: -7.3 },
+    ];
+    const direction = directions[this.practiceServeIndex % directions.length];
+    this.practiceServeIndex += 1;
+    this.simulation.serveBall(direction);
+  }
+
+  private isPracticeBallTrapped(snapshot: GameSnapshot): boolean {
+    if (snapshot.phase !== 'playing') {
+      return false;
+    }
+
+    const speed = Math.hypot(snapshot.ball.vx, snapshot.ball.vy);
+    if (speed > PRACTICE_STUCK_SPEED_EPSILON) {
+      return false;
+    }
+
+    const nearPlayer = snapshot.players.some((player) => {
+      const definition = PLAYER_DEFINITIONS[player.id];
+      const playerX = definition.axis === 'x' ? player.railPosition : definition.fixedCoord;
+      const playerY = definition.axis === 'x' ? definition.fixedCoord : player.railPosition;
+      const distance = Math.hypot(snapshot.ball.x - playerX, snapshot.ball.y - playerY);
+      return distance <= PLAYER_RADIUS + BALL_RADIUS + PRACTICE_STUCK_PLAYER_MARGIN;
+    });
+
+    if (!nearPlayer) {
+      return false;
+    }
+
+    const maxAxis = ARENA_HALF_SIZE - BALL_RADIUS;
+    const diagonalLimit = (ARENA_HALF_SIZE + (ARENA_HALF_SIZE - CHAMFER_SIZE)) - BALL_RADIUS * Math.SQRT2;
+    const nearStraightWall =
+      Math.abs(snapshot.ball.x) >= maxAxis - PRACTICE_STUCK_WALL_MARGIN ||
+      Math.abs(snapshot.ball.y) >= maxAxis - PRACTICE_STUCK_WALL_MARGIN;
+    const nearChamferWall =
+      Math.abs(snapshot.ball.x + snapshot.ball.y) >= diagonalLimit - PRACTICE_STUCK_WALL_MARGIN ||
+      Math.abs(snapshot.ball.x - snapshot.ball.y) >= diagonalLimit - PRACTICE_STUCK_WALL_MARGIN;
+
+    return nearStraightWall || nearChamferWall;
   }
 
   private handleSessionUpdate(info: SessionInfo, peers: PeerRosterEntry[]): void {

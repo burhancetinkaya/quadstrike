@@ -3,12 +3,16 @@ import Matter from 'matter-js';
 import {
   ARENA_HALF_SIZE,
   BALL_RADIUS,
+  BALL_STUCK_POSITION_EPSILON,
+  BALL_STUCK_SPEED_EPSILON,
+  BALL_STUCK_TIMEOUT_MS,
+  BOOST_CONTACT_EPSILON,
   BOOST_COOLDOWN_MS,
-  BOOST_DISTANCE,
   BOOST_FORCE,
   CHAMFER_SIZE,
   GOAL_FREEZE_MS,
   GOAL_HALF_WIDTH,
+  GOAL_SCORE_HALF_WIDTH,
   INTERPOLATION_DELAY_MS,
   PLAYER_DEFINITIONS,
   PLAYER_RADIUS,
@@ -71,7 +75,7 @@ export class MatchSimulation {
 
   private readonly ball = Bodies.circle(0, 0, BALL_RADIUS, {
     restitution: 0.9,
-    frictionAir: 0.01,
+    frictionAir: 0.004,
     mass: 1,
     label: 'ball',
   });
@@ -93,6 +97,10 @@ export class MatchSimulation {
   private lastTouchedBy: PlayerId | null = null;
 
   private goalFreezeRemainingMs = 0;
+
+  private stuckElapsedMs = 0;
+
+  private lastStuckSample: Vec2 = { x: 0, y: 0 };
 
   constructor() {
     this.players = PLAYER_DEFINITIONS.map((definition) => {
@@ -188,24 +196,34 @@ export class MatchSimulation {
 
       const delta = Vector.sub(this.ball.position, player.body.position);
       const distance = Vector.magnitude(delta);
-      if (distance <= BOOST_DISTANCE) {
+      if (distance <= PLAYER_RADIUS + BALL_RADIUS + BOOST_CONTACT_EPSILON) {
         const direction = distance === 0 ? { x: 0, y: 0 } : Vector.normalise(delta);
         Body.applyForce(this.ball, this.ball.position, {
           x: direction.x * BOOST_FORCE,
           y: direction.y * BOOST_FORCE,
         });
         player.state.boostCooldownMs = BOOST_COOLDOWN_MS;
+        this.resetStuckDetection();
       }
       player.boostQueued = false;
     });
 
     Engine.update(this.engine, deltaMs);
+    this.detectGoalFromBallPosition();
+    this.constrainBallInsideArena();
+    this.updateStuckDetection(deltaMs);
 
     return this.createSnapshot(hostTime);
   }
 
   getSnapshot(hostTime = performance.now()): GameSnapshot {
     return this.createSnapshot(hostTime);
+  }
+
+  serveBall(direction: Vec2): void {
+    Body.setPosition(this.ball, { x: 0, y: 0 });
+    Body.setVelocity(this.ball, direction);
+    this.resetStuckDetection();
   }
 
   loadSnapshot(snapshot: GameSnapshot): void {
@@ -217,6 +235,7 @@ export class MatchSimulation {
     this.networkSequence = snapshot.sequence;
     Body.setPosition(this.ball, { x: snapshot.ball.x, y: snapshot.ball.y });
     Body.setVelocity(this.ball, { x: snapshot.ball.vx, y: snapshot.ball.vy });
+    this.resetStuckDetection();
 
     snapshot.players.forEach((state) => {
       const player = this.players[state.id];
@@ -305,7 +324,7 @@ export class MatchSimulation {
     return [
       {
         side: 'north',
-        body: Bodies.rectangle(0, -ARENA_HALF_SIZE - 44, GOAL_HALF_WIDTH * 2, 44, {
+        body: Bodies.rectangle(0, -ARENA_HALF_SIZE - 44, GOAL_SCORE_HALF_WIDTH * 2, 44, {
           isStatic: true,
           isSensor: true,
           label: 'goal:north',
@@ -313,7 +332,7 @@ export class MatchSimulation {
       },
       {
         side: 'east',
-        body: Bodies.rectangle(ARENA_HALF_SIZE + 44, 0, 44, GOAL_HALF_WIDTH * 2, {
+        body: Bodies.rectangle(ARENA_HALF_SIZE + 44, 0, 44, GOAL_SCORE_HALF_WIDTH * 2, {
           isStatic: true,
           isSensor: true,
           label: 'goal:east',
@@ -321,7 +340,7 @@ export class MatchSimulation {
       },
       {
         side: 'south',
-        body: Bodies.rectangle(0, ARENA_HALF_SIZE + 44, GOAL_HALF_WIDTH * 2, 44, {
+        body: Bodies.rectangle(0, ARENA_HALF_SIZE + 44, GOAL_SCORE_HALF_WIDTH * 2, 44, {
           isStatic: true,
           isSensor: true,
           label: 'goal:south',
@@ -329,7 +348,7 @@ export class MatchSimulation {
       },
       {
         side: 'west',
-        body: Bodies.rectangle(-ARENA_HALF_SIZE - 44, 0, 44, GOAL_HALF_WIDTH * 2, {
+        body: Bodies.rectangle(-ARENA_HALF_SIZE - 44, 0, 44, GOAL_SCORE_HALF_WIDTH * 2, {
           isStatic: true,
           isSensor: true,
           label: 'goal:west',
@@ -358,6 +377,7 @@ export class MatchSimulation {
       const playerId = Number(playerBody.label.split(':')[1]) as PlayerId;
       const player = this.players[playerId];
       this.lastTouchedBy = playerId;
+      this.resetStuckDetection();
 
       const playerVelocity =
         player.definition.axis === 'x'
@@ -365,8 +385,8 @@ export class MatchSimulation {
           : { x: 0, y: player.state.velocity };
 
       Body.setVelocity(this.ball, {
-        x: this.ball.velocity.x + playerVelocity.x * 0.02,
-        y: this.ball.velocity.y + playerVelocity.y * 0.02,
+        x: this.ball.velocity.x + playerVelocity.x * 0.065,
+        y: this.ball.velocity.y + playerVelocity.y * 0.065,
       });
     });
   }
@@ -388,6 +408,35 @@ export class MatchSimulation {
     Body.setVelocity(this.ball, { x: 0, y: 0 });
   }
 
+  private detectGoalFromBallPosition(): void {
+    if (this.phase !== 'playing') {
+      return;
+    }
+
+    if (Math.abs(this.ball.position.x) <= GOAL_SCORE_HALF_WIDTH) {
+      if (this.ball.position.y <= -ARENA_HALF_SIZE + BALL_RADIUS) {
+        this.handleGoal('north');
+        return;
+      }
+
+      if (this.ball.position.y >= ARENA_HALF_SIZE - BALL_RADIUS) {
+        this.handleGoal('south');
+        return;
+      }
+    }
+
+    if (Math.abs(this.ball.position.y) <= GOAL_SCORE_HALF_WIDTH) {
+      if (this.ball.position.x <= -ARENA_HALF_SIZE + BALL_RADIUS) {
+        this.handleGoal('west');
+        return;
+      }
+
+      if (this.ball.position.x >= ARENA_HALF_SIZE - BALL_RADIUS) {
+        this.handleGoal('east');
+      }
+    }
+  }
+
   private resetBodies(): void {
     this.players.forEach((player) => {
       player.state.railPosition = player.definition.spawn;
@@ -400,6 +449,99 @@ export class MatchSimulation {
 
     Body.setPosition(this.ball, { x: 0, y: 0 });
     Body.setVelocity(this.ball, { x: 0, y: 0 });
+    this.resetStuckDetection();
+  }
+
+  private constrainBallInsideArena(): void {
+    const maxAxis = ARENA_HALF_SIZE - BALL_RADIUS;
+    const diagonalLimit = (ARENA_HALF_SIZE + (ARENA_HALF_SIZE - CHAMFER_SIZE)) - BALL_RADIUS * Math.SQRT2;
+
+    let { x, y } = this.ball.position;
+    let { x: vx, y: vy } = this.ball.velocity;
+
+    if (x > maxAxis) {
+      x = maxAxis;
+      vx = -Math.abs(vx) * 0.96;
+    } else if (x < -maxAxis) {
+      x = -maxAxis;
+      vx = Math.abs(vx) * 0.96;
+    }
+
+    if (y > maxAxis) {
+      y = maxAxis;
+      vy = -Math.abs(vy) * 0.96;
+    } else if (y < -maxAxis) {
+      y = -maxAxis;
+      vy = Math.abs(vy) * 0.96;
+    }
+
+    const resolveDiagonal = (value: number, limit: number, normal: Vec2): void => {
+      if (value <= limit) {
+        return;
+      }
+
+      const excess = value - limit;
+      const correction = excess / 2;
+      x -= normal.x * correction;
+      y -= normal.y * correction;
+
+      const unitNormal = {
+        x: normal.x / Math.SQRT2,
+        y: normal.y / Math.SQRT2,
+      };
+      const dot = vx * unitNormal.x + vy * unitNormal.y;
+      if (dot > 0) {
+        vx -= 2 * dot * unitNormal.x;
+        vy -= 2 * dot * unitNormal.y;
+        vx *= 0.96;
+        vy *= 0.96;
+      }
+    };
+
+    resolveDiagonal(x + y, diagonalLimit, { x: 1, y: 1 });
+    resolveDiagonal(-(x + y), diagonalLimit, { x: -1, y: -1 });
+    resolveDiagonal(x - y, diagonalLimit, { x: 1, y: -1 });
+    resolveDiagonal(-(x - y), diagonalLimit, { x: -1, y: 1 });
+
+    Body.setPosition(this.ball, { x, y });
+    Body.setVelocity(this.ball, { x: vx, y: vy });
+  }
+
+  private updateStuckDetection(deltaMs: number): void {
+    if (this.phase !== 'playing') {
+      this.resetStuckDetection();
+      return;
+    }
+
+    const displacement = Math.hypot(
+      this.ball.position.x - this.lastStuckSample.x,
+      this.ball.position.y - this.lastStuckSample.y,
+    );
+    const speed = Math.hypot(this.ball.velocity.x, this.ball.velocity.y);
+
+    if (speed <= BALL_STUCK_SPEED_EPSILON && displacement <= BALL_STUCK_POSITION_EPSILON) {
+      this.stuckElapsedMs += deltaMs;
+      if (this.stuckElapsedMs >= BALL_STUCK_TIMEOUT_MS) {
+        Body.setPosition(this.ball, { x: 0, y: 0 });
+        Body.setVelocity(this.ball, { x: 0, y: 0 });
+        this.resetStuckDetection();
+      }
+      return;
+    }
+
+    this.stuckElapsedMs = 0;
+    this.lastStuckSample = {
+      x: this.ball.position.x,
+      y: this.ball.position.y,
+    };
+  }
+
+  private resetStuckDetection(): void {
+    this.stuckElapsedMs = 0;
+    this.lastStuckSample = {
+      x: this.ball.position.x,
+      y: this.ball.position.y,
+    };
   }
 
   private createSnapshot(hostTime: number): GameSnapshot {

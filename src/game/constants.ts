@@ -8,13 +8,22 @@ export const GOAL_FREEZE_MS = 900;
 
 export const ARENA_HALF_SIZE = 420;
 export const CHAMFER_SIZE = 120;
-export const GOAL_HALF_WIDTH = 92;
+export const GOAL_HALF_WIDTH = 138;
 export const WALL_THICKNESS = 36;
 export const PLAYER_RADIUS = 34;
-export const PLAYER_SPEED = 410;
+export const PLAYER_SPEED = 860;
 export const BALL_RADIUS = 22;
+export const GOAL_SCORE_HALF_WIDTH = GOAL_HALF_WIDTH - BALL_RADIUS;
 export const BOOST_DISTANCE = 138;
-export const BOOST_FORCE = 0.026;
+export const BOOST_FORCE = 0.052;
+export const BOOST_CONTACT_EPSILON = 6;
+export const BALL_STUCK_TIMEOUT_MS = 3000;
+export const BALL_STUCK_SPEED_EPSILON = 0.12;
+export const BALL_STUCK_POSITION_EPSILON = 18;
+export const PRACTICE_STUCK_TIMEOUT_MS = 1200;
+export const PRACTICE_STUCK_SPEED_EPSILON = 0.7;
+export const PRACTICE_STUCK_WALL_MARGIN = 54;
+export const PRACTICE_STUCK_PLAYER_MARGIN = 22;
 
 export const SCORE_ORDER: (keyof ScoreState)[] = ['white', 'blue', 'orange', 'green'];
 
@@ -86,20 +95,20 @@ export const FIELD_POLYGON: Vec2[] = [
 
 export const GOAL_SEGMENTS = {
   north: {
-    from: { x: -GOAL_HALF_WIDTH, y: -ARENA_HALF_SIZE },
-    to: { x: GOAL_HALF_WIDTH, y: -ARENA_HALF_SIZE },
+    from: { x: -GOAL_SCORE_HALF_WIDTH, y: -ARENA_HALF_SIZE },
+    to: { x: GOAL_SCORE_HALF_WIDTH, y: -ARENA_HALF_SIZE },
   },
   east: {
-    from: { x: ARENA_HALF_SIZE, y: -GOAL_HALF_WIDTH },
-    to: { x: ARENA_HALF_SIZE, y: GOAL_HALF_WIDTH },
+    from: { x: ARENA_HALF_SIZE, y: -GOAL_SCORE_HALF_WIDTH },
+    to: { x: ARENA_HALF_SIZE, y: GOAL_SCORE_HALF_WIDTH },
   },
   south: {
-    from: { x: -GOAL_HALF_WIDTH, y: ARENA_HALF_SIZE },
-    to: { x: GOAL_HALF_WIDTH, y: ARENA_HALF_SIZE },
+    from: { x: -GOAL_SCORE_HALF_WIDTH, y: ARENA_HALF_SIZE },
+    to: { x: GOAL_SCORE_HALF_WIDTH, y: ARENA_HALF_SIZE },
   },
   west: {
-    from: { x: -ARENA_HALF_SIZE, y: -GOAL_HALF_WIDTH },
-    to: { x: -ARENA_HALF_SIZE, y: GOAL_HALF_WIDTH },
+    from: { x: -ARENA_HALF_SIZE, y: -GOAL_SCORE_HALF_WIDTH },
+    to: { x: -ARENA_HALF_SIZE, y: GOAL_SCORE_HALF_WIDTH },
   },
 } as const;
 

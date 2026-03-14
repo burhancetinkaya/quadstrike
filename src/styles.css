@@ -85,6 +85,7 @@ input {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: nowrap;
   padding: 18px 22px;
   border: 1px solid var(--line);
   border-radius: 22px;
@@ -95,6 +96,8 @@ input {
 .brand {
   display: grid;
   gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .brand h1 {
@@ -126,6 +129,43 @@ input {
 }
 
 .status-pill strong {
+  color: var(--text);
+}
+
+.topbar-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(7, 15, 10, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.topbar-status::-webkit-scrollbar {
+  display: none;
+}
+
+.topbar-status span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.8rem;
+  flex: 0 0 auto;
+}
+
+.topbar-status strong {
   color: var(--text);
 }
 
@@ -239,6 +279,8 @@ input {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .metric strong {
@@ -419,6 +461,12 @@ input {
   gap: 16px;
 }
 
+.session-intro {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .card-title {
   margin: 0;
   font-size: 1rem;
@@ -455,7 +503,7 @@ input {
 
 .button-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -513,6 +561,132 @@ input {
   min-height: 3em;
 }
 
+.modal-shell {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.modal-shell.visible {
+  display: flex;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 8, 5, 0.76);
+  backdrop-filter: blur(10px);
+}
+
+.modal-panel {
+  position: relative;
+  width: min(92vw, 480px);
+  padding: 24px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(16, 32, 22, 0.98), rgba(8, 16, 11, 0.96));
+  box-shadow: var(--glow);
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.modal-eyebrow {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.modal-panel h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+}
+
+.modal-copy {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.modal-grid {
+  margin-top: 18px;
+}
+
+.modal-feedback {
+  min-height: 3.2em;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(4, 11, 8, 0.44);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.modal-feedback[data-state='pending'] {
+  color: #d8e6ff;
+  border-color: rgba(41, 121, 255, 0.24);
+  background: rgba(16, 30, 50, 0.62);
+}
+
+.modal-feedback[data-state='success'] {
+  color: #d8ffe4;
+  border-color: rgba(0, 200, 83, 0.26);
+  background: rgba(8, 34, 19, 0.7);
+}
+
+.modal-feedback[data-state='error'] {
+  color: #ffd9d0;
+  border-color: rgba(255, 109, 0, 0.24);
+  background: rgba(42, 18, 8, 0.72);
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.modal-actions button {
+  min-height: 46px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(26, 54, 37, 0.96), rgba(12, 25, 17, 0.96));
+  cursor: pointer;
+}
+
+.modal-actions button.secondary {
+  background: linear-gradient(180deg, rgba(18, 33, 53, 0.96), rgba(10, 18, 28, 0.96));
+}
+
+.modal-actions button.ghost {
+  background: rgba(5, 12, 8, 0.36);
+}
+
+.modal-actions button:disabled {
+  cursor: progress;
+  opacity: 0.62;
+}
+
 @media (max-width: 1080px) {
   .layout {
     grid-template-columns: 1fr;
@@ -529,15 +703,16 @@ input {
     align-items: flex-start;
   }
 
-  .metrics {
-    max-width: 74%;
+  .topbar-status {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .scoreboard {
     width: calc(100% - 32px);
   }
 
-  .button-row {
+  .modal-actions {
     grid-template-columns: 1fr;
   }
 }

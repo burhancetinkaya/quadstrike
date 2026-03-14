@@ -13,7 +13,9 @@ export interface HudUpdate {
 type PlayerVisual = {
   container: Phaser.GameObjects.Container;
   ring: Phaser.GameObjects.Arc;
+  pulseRing: Phaser.GameObjects.Arc;
   shadow: Phaser.GameObjects.Ellipse;
+  pulse: number;
 };
 
 type BallVisual = {
@@ -55,6 +57,8 @@ export class ArenaScene extends Phaser.Scene {
   private showPhysicsDebug = false;
 
   private showBoundsDebug = false;
+
+  private previousLastTouchedBy: number | null = null;
 
   constructor(
     private readonly runtime: MatchRuntime,
@@ -164,6 +168,14 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private renderSnapshot(snapshot: GameSnapshot): void {
+    if (snapshot.lastTouchedBy !== null && snapshot.lastTouchedBy !== this.previousLastTouchedBy) {
+      const visual = this.playerVisuals.get(snapshot.lastTouchedBy);
+      if (visual) {
+        visual.pulse = 1;
+      }
+    }
+    this.previousLastTouchedBy = snapshot.lastTouchedBy;
+
     PLAYER_DEFINITIONS.forEach((definition) => {
       const player = snapshot.players[definition.id];
       this.positionPlayer(definition, player);
@@ -197,6 +209,11 @@ export class ArenaScene extends Phaser.Scene {
       this.runtime.getSessionInfo().localPlayerId === player.id ? 0.95 : 0.3,
     );
     visual.shadow.fillAlpha = player.connected ? 0.24 : 0.1;
+
+    visual.pulse = Math.max(0, visual.pulse - 0.09);
+    const pulseScale = 1 + visual.pulse * 0.9;
+    visual.pulseRing.setScale(pulseScale);
+    visual.pulseRing.setStrokeStyle(6 - visual.pulse * 2, toColorNumber(definition.color), visual.pulse * 0.75);
   }
 
   private updateGoalFlash(snapshot: GameSnapshot, delta: number): void {
@@ -259,19 +276,11 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.ellipse(0, 0, 104, 34, 0x000000, 0.24);
     const glow = this.add.ellipse(0, -18, 96, 64, toColorNumber(definition.glow), 0.12);
     const base = this.add.circle(0, -18, 30, toColorNumber(definition.color), 1);
+    const pulseRing = this.add.circle(0, -18, 38, 0xffffff, 0).setStrokeStyle(0, toColorNumber(definition.color), 0);
     const ring = this.add.circle(0, -18, 36, 0xffffff, 0.05).setStrokeStyle(3, 0xffffff, 0.3);
-    const handleOffset =
-      definition.railSide === 'north'
-        ? { x: 0, y: -54 }
-        : definition.railSide === 'south'
-          ? { x: 0, y: 20 }
-          : definition.railSide === 'east'
-            ? { x: 42, y: -18 }
-            : { x: -42, y: -18 };
-    const handle = this.add.rectangle(handleOffset.x, handleOffset.y, 24, 28, toColorNumber(definition.color), 0.92);
 
-    container.add([shadow, glow, base, ring, handle]);
-    return { container, ring, shadow };
+    container.add([shadow, glow, pulseRing, base, ring]);
+    return { container, ring, pulseRing, shadow, pulse: 0 };
   }
 
   private createBallVisual(): BallVisual {
