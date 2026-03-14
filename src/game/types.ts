@@ -4,6 +4,7 @@ export type RailSide = 'north' | 'east' | 'south' | 'west';
 export type RailAxis = 'x' | 'y';
 export type MatchPhase = 'playing' | 'goal';
 export type SessionMode = 'practice' | 'host' | 'client';
+export type LobbyState = 'waiting' | 'countdown' | 'live';
 
 export interface Vec2 {
   x: number;
@@ -78,6 +79,10 @@ export interface NetworkStats {
 export interface SessionInfo {
   mode: SessionMode;
   matchSize: MatchSize;
+  connectedPlayerIds: PlayerId[];
+  expectedPlayerCount: number;
+  lobbyState: LobbyState;
+  countdownStartAtMs: number | null;
   roomId: string | null;
   peerId: string;
   isHost: boolean;

@@ -31,6 +31,10 @@ export class MatchNetwork {
   private sessionInfo: SessionInfo = {
     mode: 'practice',
     matchSize: 4,
+    connectedPlayerIds: [0, 1, 2, 3],
+    expectedPlayerCount: 4,
+    lobbyState: 'waiting',
+    countdownStartAtMs: null,
     roomId: null,
     peerId: crypto.randomUUID(),
     isHost: true,
@@ -63,6 +67,14 @@ export class MatchNetwork {
   async startClient(url: string, roomId: string): Promise<SessionInfo> {
     this.resetConnections();
     return await this.joinRoom(url, roomId, 'client');
+  }
+
+  broadcastMatchCountdown(startAtMs: number): void {
+    if (!this.sessionInfo.isHost) {
+      return;
+    }
+
+    this.signaling.sendMatchCountdown(startAtMs);
   }
 
   broadcastState(snapshot: GameSnapshot): void {
@@ -105,6 +117,10 @@ export class MatchNetwork {
     this.sessionInfo = {
       mode: 'practice',
       matchSize: 4,
+      connectedPlayerIds: [0, 1, 2, 3],
+      expectedPlayerCount: 4,
+      lobbyState: 'waiting',
+      countdownStartAtMs: null,
       roomId: null,
       peerId: crypto.randomUUID(),
       isHost: true,
@@ -126,6 +142,10 @@ export class MatchNetwork {
     this.sessionInfo = {
       mode,
       matchSize: joined.matchSize,
+      connectedPlayerIds: [...new Set(joined.peers.map((peer) => peer.playerId))].sort((left, right) => left - right),
+      expectedPlayerCount: joined.matchSize,
+      lobbyState: 'waiting',
+      countdownStartAtMs: null,
       roomId: joined.roomId,
       peerId: joined.peerId,
       isHost: joined.isHost,
@@ -167,6 +187,10 @@ export class MatchNetwork {
     if (message.type === 'peer-left') {
       this.peers = message.peers;
       this.sessionInfo.matchSize = message.matchSize;
+      this.sessionInfo.connectedPlayerIds = [...new Set(this.peers.map((peer) => peer.playerId))].sort((left, right) => left - right);
+      this.sessionInfo.expectedPlayerCount = message.matchSize;
+      this.sessionInfo.lobbyState = this.sessionInfo.lobbyState === 'live' ? 'live' : 'waiting';
+      this.sessionInfo.countdownStartAtMs = null;
       this.links.get(message.peerId)?.close();
       this.links.delete(message.peerId);
       this.updateConnectedPeers();
@@ -178,6 +202,10 @@ export class MatchNetwork {
     if (message.type === 'peer-joined') {
       this.peers = message.peers;
       this.sessionInfo.matchSize = message.matchSize;
+      this.sessionInfo.connectedPlayerIds = [...new Set(this.peers.map((peer) => peer.playerId))].sort((left, right) => left - right);
+      this.sessionInfo.expectedPlayerCount = message.matchSize;
+      this.sessionInfo.lobbyState = this.sessionInfo.lobbyState === 'live' ? 'live' : 'waiting';
+      this.sessionInfo.countdownStartAtMs = null;
       this.updateConnectedPeers();
       this.callbacks.onSession(this.sessionInfo, this.peers);
 
@@ -195,6 +223,10 @@ export class MatchNetwork {
       this.sessionInfo = {
         ...this.sessionInfo,
         matchSize: message.matchSize,
+        connectedPlayerIds: [...new Set(this.peers.map((peer) => peer.playerId))].sort((left, right) => left - right),
+        expectedPlayerCount: message.matchSize,
+        lobbyState: this.sessionInfo.lobbyState === 'live' ? 'live' : 'waiting',
+        countdownStartAtMs: null,
         isHost: message.hostPeerId === this.sessionInfo.peerId,
         mode: message.hostPeerId === this.sessionInfo.peerId ? 'host' : 'client',
       };
@@ -214,6 +246,15 @@ export class MatchNetwork {
       } else {
         this.callbacks.onStatus('Host migrated. Waiting for the new host to resume authority.');
       }
+      return;
+    }
+
+    if (message.type === 'match-countdown') {
+      this.sessionInfo.matchSize = message.matchSize;
+      this.sessionInfo.expectedPlayerCount = message.matchSize;
+      this.sessionInfo.lobbyState = 'countdown';
+      this.sessionInfo.countdownStartAtMs = message.startAtMs;
+      this.callbacks.onSession(this.sessionInfo, this.peers);
       return;
     }
 

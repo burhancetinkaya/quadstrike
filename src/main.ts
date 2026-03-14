@@ -43,6 +43,12 @@ root.innerHTML = `
             <div class="countdown-overlay" id="countdown-overlay" aria-hidden="true">
               <span class="countdown-value" id="countdown-value">3</span>
             </div>
+            <div class="lobby-overlay" id="lobby-overlay" aria-hidden="true">
+              <div class="lobby-panel">
+                <p class="lobby-title" id="lobby-title">Waiting For Players</p>
+                <p class="lobby-copy" id="lobby-copy">1 / 2 connected</p>
+              </div>
+            </div>
             <pre class="debug-overlay" id="debug-overlay"></pre>
             <div class="orientation-overlay" id="orientation-overlay">
               <div class="orientation-panel">
@@ -126,6 +132,9 @@ const matchClock = root.querySelector<HTMLDivElement>('#match-clock');
 const goalToast = root.querySelector<HTMLDivElement>('#goal-toast');
 const countdownOverlay = root.querySelector<HTMLDivElement>('#countdown-overlay');
 const countdownValue = root.querySelector<HTMLSpanElement>('#countdown-value');
+const lobbyOverlay = root.querySelector<HTMLDivElement>('#lobby-overlay');
+const lobbyTitle = root.querySelector<HTMLParagraphElement>('#lobby-title');
+const lobbyCopy = root.querySelector<HTMLParagraphElement>('#lobby-copy');
 const debugOverlay = root.querySelector<HTMLPreElement>('#debug-overlay');
 const statusText = root.querySelector<HTMLParagraphElement>('#status-text');
 const orientationOverlay = root.querySelector<HTMLDivElement>('#orientation-overlay');
@@ -165,6 +174,9 @@ if (
   !goalToast ||
   !countdownOverlay ||
   !countdownValue ||
+  !lobbyOverlay ||
+  !lobbyTitle ||
+  !lobbyCopy ||
   !debugOverlay ||
   !statusText ||
   !orientationOverlay ||
@@ -239,13 +251,103 @@ let sessionDialogMode: 'practice' | 'host' | 'join' | null = null;
 let sessionDialogPending = false;
 let countdownActive = false;
 let countdownRunId = 0;
+let countdownMode: 'practice' | 'multiplayer' | null = null;
 let isLandscape = true;
 let resultModalOpen = false;
 let matchFinished = false;
 let currentSessionInfo: SessionInfo | null = null;
+let networkCountdownTimer = 0;
+let networkCountdownStartAtMs: number | null = null;
+let networkCountdownValue: string | null = null;
 
 const syncRuntimePause = (): void => {
-  runtime?.setPaused(!isLandscape || countdownActive || resultModalOpen);
+  runtime?.setPaused(!isLandscape || resultModalOpen || (countdownActive && countdownMode === 'practice'));
+};
+
+const setCountdownDisplay = (value: string): void => {
+  countdownValue.textContent = value;
+  countdownValue.classList.remove('animate');
+  void countdownValue.offsetWidth;
+  countdownValue.classList.add('animate');
+};
+
+const hideCountdownOverlay = (): void => {
+  countdownOverlay.classList.remove('visible');
+  countdownOverlay.setAttribute('aria-hidden', 'true');
+};
+
+const hideLobbyOverlay = (): void => {
+  lobbyOverlay.classList.remove('visible');
+  lobbyOverlay.setAttribute('aria-hidden', 'true');
+};
+
+const showLobbyOverlay = (title: string, copy: string): void => {
+  lobbyTitle.textContent = title;
+  lobbyCopy.textContent = copy;
+  lobbyOverlay.classList.add('visible');
+  lobbyOverlay.setAttribute('aria-hidden', 'false');
+};
+
+const stopNetworkCountdownVisual = (): void => {
+  if (networkCountdownTimer) {
+    window.clearInterval(networkCountdownTimer);
+    networkCountdownTimer = 0;
+  }
+
+  networkCountdownStartAtMs = null;
+  networkCountdownValue = null;
+  if (countdownMode === 'multiplayer') {
+    countdownActive = false;
+    countdownMode = null;
+    hideCountdownOverlay();
+    syncRuntimePause();
+  }
+};
+
+const cancelPracticeCountdown = (): void => {
+  if (countdownMode !== 'practice') {
+    return;
+  }
+
+  countdownRunId += 1;
+  countdownActive = false;
+  countdownMode = null;
+  hideCountdownOverlay();
+  syncRuntimePause();
+};
+
+const startNetworkCountdownVisual = (startAtMs: number): void => {
+  if (networkCountdownStartAtMs === startAtMs && networkCountdownTimer) {
+    return;
+  }
+
+  stopNetworkCountdownVisual();
+  networkCountdownStartAtMs = startAtMs;
+  countdownActive = true;
+  countdownMode = 'multiplayer';
+  countdownOverlay.classList.add('visible');
+  countdownOverlay.setAttribute('aria-hidden', 'false');
+  syncRuntimePause();
+
+  const render = (): void => {
+    if (networkCountdownStartAtMs === null) {
+      return;
+    }
+
+    const remainingMs = networkCountdownStartAtMs - Date.now();
+    const nextValue = remainingMs > 1300 ? '3' : remainingMs > 650 ? '2' : remainingMs > 0 ? '1' : '0';
+    if (nextValue !== networkCountdownValue) {
+      networkCountdownValue = nextValue;
+      setCountdownDisplay(nextValue);
+    }
+
+    if (Date.now() >= networkCountdownStartAtMs + 320) {
+      stopNetworkCountdownVisual();
+    }
+  };
+
+  render();
+  networkCountdownTimer = window.setInterval(render, 50);
 };
 
 const setStatus = (message: string): void => {
@@ -350,6 +452,36 @@ const normalizeRoomId = (value: string): string => {
   return normalized;
 };
 
+const syncLobbyPresentation = (session: SessionInfo): void => {
+  if (session.mode === 'practice') {
+    if (session.lobbyState === 'waiting') {
+      cancelPracticeCountdown();
+    }
+    hideLobbyOverlay();
+    stopNetworkCountdownVisual();
+    return;
+  }
+
+  const connectedCount = session.connectedPlayerIds.length;
+
+  if (session.lobbyState === 'waiting') {
+    stopNetworkCountdownVisual();
+    showLobbyOverlay('Waiting For Players', `${connectedCount} / ${session.expectedPlayerCount} connected`);
+    setStatus(`Waiting for players (${connectedCount}/${session.expectedPlayerCount}).`);
+    return;
+  }
+
+  hideLobbyOverlay();
+
+  if (session.lobbyState === 'countdown' && session.countdownStartAtMs !== null) {
+    startNetworkCountdownVisual(session.countdownStartAtMs);
+    setStatus('All players connected. Match countdown started.');
+    return;
+  }
+
+  setStatus(session.isHost ? `Room ${session.roomId} is live.` : `Connected to room ${session.roomId}. Match live.`);
+};
+
 runtime = new MatchRuntime({
   onStatus: (message) => setStatus(message),
   onSession: (session) => {
@@ -358,6 +490,8 @@ runtime = new MatchRuntime({
     playerValue.textContent = PLAYER_DEFINITIONS[session.localPlayerId].label;
     roomValue.textContent = session.roomId ?? 'LOCAL';
     lastMatchSize = session.matchSize;
+    syncLobbyPresentation(session);
+    syncRuntimePause();
   },
   onSnapshot: () => {
     if (!runtime) {
@@ -413,7 +547,10 @@ const formatMatchClock = (snapshot: GameSnapshot): string => {
 };
 
 const getWinnerSummary = (snapshot: GameSnapshot): { winnerText: string; summaryText: string } => {
-  const activePlayers = getActivePlayerIds(currentSessionInfo?.matchSize ?? 4);
+  const activePlayers =
+    currentSessionInfo?.mode === 'practice'
+      ? getActivePlayerIds(currentSessionInfo.matchSize)
+      : (currentSessionInfo?.connectedPlayerIds ?? [0]);
   const ranked = [...PLAYER_DEFINITIONS]
     .filter((player) => activePlayers.includes(player.id))
     .map((player) => ({
@@ -465,6 +602,7 @@ const delay = (ms: number): Promise<void> =>
   });
 
 const runStartCountdown = async (): Promise<void> => {
+  stopNetworkCountdownVisual();
   resultModal.classList.remove('visible');
   resultModal.setAttribute('aria-hidden', 'true');
   resultModalOpen = false;
@@ -472,6 +610,7 @@ const runStartCountdown = async (): Promise<void> => {
   countdownRunId += 1;
   const currentRun = countdownRunId;
   countdownActive = true;
+  countdownMode = 'practice';
   syncRuntimePause();
   countdownOverlay.classList.add('visible');
   countdownOverlay.setAttribute('aria-hidden', 'false');
@@ -480,10 +619,7 @@ const runStartCountdown = async (): Promise<void> => {
     if (currentRun !== countdownRunId) {
       return;
     }
-    countdownValue.textContent = value;
-    countdownValue.classList.remove('animate');
-    void countdownValue.offsetWidth;
-    countdownValue.classList.add('animate');
+    setCountdownDisplay(value);
     await delay(650);
   }
 
@@ -491,11 +627,9 @@ const runStartCountdown = async (): Promise<void> => {
     return;
   }
 
-  countdownValue.textContent = '0';
-  countdownValue.classList.remove('animate');
-  void countdownValue.offsetWidth;
-  countdownValue.classList.add('animate');
+  setCountdownDisplay('0');
   countdownActive = false;
+  countdownMode = null;
   syncRuntimePause();
   await delay(320);
 
@@ -503,8 +637,7 @@ const runStartCountdown = async (): Promise<void> => {
     return;
   }
 
-  countdownOverlay.classList.remove('visible');
-  countdownOverlay.setAttribute('aria-hidden', 'true');
+  hideCountdownOverlay();
 };
 
 const setScoreboard = (snapshot: GameSnapshot): void => {
@@ -523,8 +656,11 @@ const setScoreboard = (snapshot: GameSnapshot): void => {
     }
     return left.definition.id - right.definition.id;
   });
-  const activePlayers = getActivePlayerIds(currentSessionInfo?.matchSize ?? 4);
-  const activeRankedCards = rankedCards.filter((entry) => activePlayers.includes(entry.definition.id));
+  const visiblePlayers =
+    currentSessionInfo?.mode === 'practice'
+      ? getActivePlayerIds(currentSessionInfo.matchSize)
+      : (currentSessionInfo?.connectedPlayerIds ?? [0]);
+  const activeRankedCards = rankedCards.filter((entry) => visiblePlayers.includes(entry.definition.id));
 
   activeRankedCards.forEach((entry, index) => {
     entry.card.dataset.rank = String(index + 1);
@@ -533,7 +669,7 @@ const setScoreboard = (snapshot: GameSnapshot): void => {
     scoreboard.appendChild(entry.card);
   });
   scoreCards
-    .filter((entry) => !activePlayers.includes(entry.definition.id))
+    .filter((entry) => !visiblePlayers.includes(entry.definition.id))
     .forEach((entry) => {
       entry.card.classList.remove('leader');
       entry.card.hidden = true;
@@ -718,18 +854,16 @@ const submitSessionDialog = async (): Promise<void> => {
       lastMatchSize = matchSize;
       await runtime.startHost(signalUrl, roomId, matchSize);
       sessionModalFeedback.dataset.state = 'success';
-      sessionModalFeedback.textContent = `Connected. Room ${roomId} is ready to share.`;
+      sessionModalFeedback.textContent = `Connected. Room ${roomId} is ready. Waiting for players.`;
       closeSessionDialog();
-      void runStartCountdown();
       return;
     } else {
       const signalUrl = getConfiguredSignalUrl();
       const roomId = normalizeRoomId(sessionRoomIdInput.value);
       await runtime.startClient(signalUrl, roomId);
       sessionModalFeedback.dataset.state = 'success';
-      sessionModalFeedback.textContent = `Connected. Joined room ${roomId}.`;
+      sessionModalFeedback.textContent = `Connected. Joined room ${roomId}. Waiting for the room to fill.`;
       closeSessionDialog();
-      void runStartCountdown();
       return;
     }
   } catch (error) {

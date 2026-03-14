@@ -21,6 +21,7 @@ import type { PeerRosterEntry } from '../network/signaling';
 
 const FIXED_STEP_MS = 1000 / SIMULATION_HZ;
 const NETWORK_STEP_MS = 1000 / NETWORK_SEND_HZ;
+const MULTIPLAYER_COUNTDOWN_START_DELAY_MS = 2100;
 
 export interface RuntimeCallbacks {
   onStatus: (message: string) => void;
@@ -50,6 +51,10 @@ export class MatchRuntime {
   private readonly sessionInfo: SessionInfo = {
     mode: 'practice',
     matchSize: 4,
+    connectedPlayerIds: [0, 1, 2, 3],
+    expectedPlayerCount: 4,
+    lobbyState: 'waiting',
+    countdownStartAtMs: null,
     roomId: null,
     peerId: 'local-practice',
     isHost: true,
@@ -77,6 +82,8 @@ export class MatchRuntime {
   private practiceTrapElapsedMs = 0;
 
   private practiceActive = false;
+
+  private countdownDispatchPending = false;
 
   constructor(private readonly callbacks: RuntimeCallbacks) {
     this.resetLocalPractice(4, false);
@@ -112,11 +119,17 @@ export class MatchRuntime {
   }
 
   update(deltaMs: number): void {
+    this.refreshLobbyState();
+
     if (this.paused) {
       return;
     }
 
     if (this.sessionInfo.mode === 'practice' && !this.practiceActive) {
+      return;
+    }
+
+    if (this.sessionInfo.mode !== 'practice' && this.sessionInfo.lobbyState !== 'live') {
       return;
     }
 
@@ -133,7 +146,10 @@ export class MatchRuntime {
   }
 
   getSessionInfo(): SessionInfo {
-    return { ...this.sessionInfo };
+    return {
+      ...this.sessionInfo,
+      connectedPlayerIds: [...this.sessionInfo.connectedPlayerIds],
+    };
   }
 
   getNetworkStats(): NetworkStats {
@@ -157,6 +173,10 @@ export class MatchRuntime {
     PLAYER_DEFINITIONS.forEach((player) => this.simulation.setPlayerConnected(player.id, isPlayerActive(player.id, matchSize)));
     this.sessionInfo.mode = 'practice';
     this.sessionInfo.matchSize = matchSize;
+    this.sessionInfo.connectedPlayerIds = getActivePlayerIds(matchSize);
+    this.sessionInfo.expectedPlayerCount = matchSize;
+    this.sessionInfo.lobbyState = startPlaying ? 'live' : 'waiting';
+    this.sessionInfo.countdownStartAtMs = null;
     this.sessionInfo.roomId = null;
     this.sessionInfo.peerId = 'local-practice';
     this.sessionInfo.isHost = true;
@@ -171,9 +191,10 @@ export class MatchRuntime {
     this.practiceServeIndex = 0;
     this.practiceTrapElapsedMs = 0;
     this.practiceActive = startPlaying;
+    this.countdownDispatchPending = false;
     this.renderSnapshot = this.simulation.getSnapshot();
     if (startPlaying) {
-      this.kickoffPracticeBall();
+      this.serveOpeningBall();
     }
     this.callbacks.onSession({ ...this.sessionInfo });
     this.renderSnapshot = this.simulation.getSnapshot();
@@ -198,6 +219,8 @@ export class MatchRuntime {
       let snapshot = this.simulation.step(FIXED_STEP_MS, performance.now());
       if (this.sessionInfo.mode === 'practice') {
         snapshot = this.ensurePracticeBallIsLive(snapshot);
+      } else if (this.sessionInfo.lobbyState === 'live') {
+        snapshot = this.ensureMultiplayerBallIsLive(snapshot);
       }
       this.renderSnapshot = snapshot;
       this.callbacks.onSnapshot(snapshot);
@@ -272,7 +295,7 @@ export class MatchRuntime {
     if (this.isPracticeBallTrapped(snapshot)) {
       this.practiceTrapElapsedMs += FIXED_STEP_MS;
       if (this.practiceTrapElapsedMs >= PRACTICE_STUCK_TIMEOUT_MS) {
-        this.kickoffPracticeBall();
+        this.serveOpeningBall();
         this.practiceTrapElapsedMs = 0;
         return this.simulation.getSnapshot();
       }
@@ -283,14 +306,29 @@ export class MatchRuntime {
     const speed = Math.hypot(snapshot.ball.vx, snapshot.ball.vy);
     const centered = Math.abs(snapshot.ball.x) < 1 && Math.abs(snapshot.ball.y) < 1;
     if (snapshot.phase === 'playing' && centered && speed < 0.05) {
-      this.kickoffPracticeBall();
+      this.serveOpeningBall();
       this.practiceTrapElapsedMs = 0;
       return this.simulation.getSnapshot();
     }
     return snapshot;
   }
 
-  private kickoffPracticeBall(): void {
+  private ensureMultiplayerBallIsLive(snapshot: GameSnapshot): GameSnapshot {
+    if (snapshot.phase !== 'playing') {
+      return snapshot;
+    }
+
+    const speed = Math.hypot(snapshot.ball.vx, snapshot.ball.vy);
+    const centered = Math.abs(snapshot.ball.x) < 1 && Math.abs(snapshot.ball.y) < 1;
+    if (!centered || speed >= 0.05) {
+      return snapshot;
+    }
+
+    this.serveOpeningBall();
+    return this.simulation.getSnapshot();
+  }
+
+  private serveOpeningBall(): void {
     const directions = [
       { x: 9.2, y: 5.8 },
       { x: -9.0, y: 6.1 },
@@ -337,16 +375,29 @@ export class MatchRuntime {
   }
 
   private handleSessionUpdate(info: SessionInfo, peers: PeerRosterEntry[]): void {
+    const shouldPromoteToHost =
+      info.isHost &&
+      (this.sessionInfo.mode !== 'host' || this.sessionInfo.roomId !== info.roomId || this.sessionInfo.peerId !== info.peerId);
+
     this.sessionInfo.mode = info.mode;
     this.sessionInfo.matchSize = info.matchSize;
+    this.sessionInfo.connectedPlayerIds = [...info.connectedPlayerIds];
+    this.sessionInfo.expectedPlayerCount = info.expectedPlayerCount;
+    this.sessionInfo.lobbyState = info.lobbyState;
+    this.sessionInfo.countdownStartAtMs = info.countdownStartAtMs;
     this.sessionInfo.roomId = info.roomId;
     this.sessionInfo.peerId = info.peerId;
     this.sessionInfo.isHost = info.isHost;
     this.sessionInfo.localPlayerId = info.localPlayerId;
 
-    if (info.isHost) {
+    this.countdownDispatchPending = info.lobbyState === 'waiting' ? false : this.countdownDispatchPending;
+    if (info.lobbyState === 'countdown') {
+      this.countdownDispatchPending = false;
+    }
+
+    if (shouldPromoteToHost) {
       this.promoteToHost(info.localPlayerId, this.lastReceivedSnapshot);
-    } else {
+    } else if (!info.isHost) {
       this.replica = new ClientReplica(info.localPlayerId);
       if (this.lastReceivedSnapshot) {
         this.replica.receiveSnapshot(this.lastReceivedSnapshot, performance.now());
@@ -357,15 +408,16 @@ export class MatchRuntime {
     }
 
     this.syncConnectedPlayers(peers);
-    this.callbacks.onSession({ ...this.sessionInfo });
+    this.callbacks.onSession(this.getSessionInfo());
+    this.maybeStartMultiplayerCountdown();
   }
 
   private promoteToHost(localPlayerId: PlayerId, baseSnapshot: GameSnapshot | null): void {
     this.sessionInfo.mode = this.sessionInfo.roomId ? 'host' : 'practice';
-    this.simulation.setMatchSize(this.sessionInfo.matchSize);
     this.sessionInfo.isHost = true;
     this.sessionInfo.localPlayerId = localPlayerId;
     this.simulation = new MatchSimulation();
+    this.simulation.setMatchSize(this.sessionInfo.matchSize);
     if (baseSnapshot) {
       this.simulation.loadSnapshot(baseSnapshot);
     }
@@ -375,7 +427,6 @@ export class MatchRuntime {
     this.localAxis = 0;
     this.remoteInputs = [];
     this.renderSnapshot = this.simulation.getSnapshot();
-    this.callbacks.onSession({ ...this.sessionInfo });
     this.callbacks.onSnapshot(this.renderSnapshot);
   }
 
@@ -390,5 +441,37 @@ export class MatchRuntime {
         (peers.some((peer) => peer.playerId === player.id) || this.sessionInfo.mode === 'practice');
       this.simulation.setPlayerConnected(player.id, connected);
     });
+  }
+
+  private maybeStartMultiplayerCountdown(): void {
+    if (
+      !this.sessionInfo.isHost ||
+      this.sessionInfo.mode === 'practice' ||
+      this.sessionInfo.lobbyState !== 'waiting' ||
+      this.countdownDispatchPending ||
+      this.sessionInfo.connectedPlayerIds.length !== this.sessionInfo.expectedPlayerCount
+    ) {
+      return;
+    }
+
+    this.countdownDispatchPending = true;
+    this.network.broadcastMatchCountdown(Date.now() + MULTIPLAYER_COUNTDOWN_START_DELAY_MS);
+    this.callbacks.onStatus('All players connected. Match countdown started.');
+  }
+
+  private refreshLobbyState(): void {
+    if (
+      this.sessionInfo.mode === 'practice' ||
+      this.sessionInfo.lobbyState !== 'countdown' ||
+      this.sessionInfo.countdownStartAtMs === null ||
+      Date.now() < this.sessionInfo.countdownStartAtMs
+    ) {
+      return;
+    }
+
+    this.sessionInfo.lobbyState = 'live';
+    this.sessionInfo.countdownStartAtMs = null;
+    this.callbacks.onSession(this.getSessionInfo());
+    this.callbacks.onStatus('Match live.');
   }
 }

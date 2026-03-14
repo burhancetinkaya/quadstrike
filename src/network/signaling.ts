@@ -25,6 +25,12 @@ export type SignalingMessage =
       peers: PeerRosterEntry[];
     }
   | {
+      type: 'match-countdown';
+      roomId: string;
+      matchSize: MatchSize;
+      startAtMs: number;
+    }
+  | {
       type: 'signal';
       roomId: string;
       fromPeerId: string;
@@ -117,6 +123,19 @@ export class SignalingClient {
         type: 'signal',
         targetPeerId,
         signal,
+      }),
+    );
+  }
+
+  sendMatchCountdown(startAtMs: number): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.socket.send(
+      JSON.stringify({
+        type: 'match-countdown',
+        startAtMs,
       }),
     );
   }

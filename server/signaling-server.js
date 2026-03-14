@@ -123,6 +123,7 @@ wss.on('connection', (socket) => {
           matchSize: room.matchSize,
           playerId: assignedPlayerId,
           hostPeerId: room.hostPeerId,
+          peers: [...room.playerAssignments.entries()].map(([id, playerId]) => ({ peerId: id, playerId })),
         },
         peerId,
       );
@@ -150,6 +151,27 @@ wss.on('connection', (socket) => {
         fromPeerId: peerId,
         targetPeerId,
         signal: message.signal,
+      });
+      return;
+    }
+
+    if (message.type === 'match-countdown') {
+      if (peerId !== room.hostPeerId) {
+        sendJson(socket, { type: 'error', message: 'Only the host can start the match countdown.' });
+        return;
+      }
+
+      const startAtMs = Number(message.startAtMs);
+      if (!Number.isFinite(startAtMs)) {
+        sendJson(socket, { type: 'error', message: 'startAtMs must be a valid number.' });
+        return;
+      }
+
+      broadcast(room, {
+        type: 'match-countdown',
+        roomId,
+        matchSize: room.matchSize,
+        startAtMs,
       });
       return;
     }
