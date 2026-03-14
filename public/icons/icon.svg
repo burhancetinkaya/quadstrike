@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#17361f"/>
+      <stop offset="100%" stop-color="#08130c"/>
+    </linearGradient>
+    <linearGradient id="pitch" x1="0%" x2="0%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#42a047"/>
+      <stop offset="100%" stop-color="#1b5e20"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <g transform="translate(256 256)">
+    <polygon
+      points="-176,-82 -82,-176 82,-176 176,-82 176,82 82,176 -82,176 -176,82"
+      fill="url(#pitch)"
+      stroke="#ccff90"
+      stroke-width="14"
+    />
+    <circle r="34" fill="#fafafa"/>
+    <path d="M-118 -12h236M0 -126v252" stroke="#e8f5e9" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="0" cy="-126" r="22" fill="#ffffff"/>
+    <circle cx="126" cy="0" r="22" fill="#2979ff"/>
+    <circle cx="0" cy="126" r="22" fill="#ff6d00"/>
+    <circle cx="-126" cy="0" r="22" fill="#00c853"/>
+  </g>
+</svg>

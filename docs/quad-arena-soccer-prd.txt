@@ -1,0 +1,399 @@
+QuadStrike (WebRTC Edition)
+Product Requirements Document (PRD)
+
+Version: 1.1
+
+
+1. Product Vision
+
+QuadStrike is a browser-based multiplayer physics sports game where 4 players compete in a square arena.
+
+The game focuses on:
+
+Low latency gameplay
+Deterministic physics
+Peer-to-peer networking
+Competitive mechanics
+
+Players connect using WebRTC DataChannels while a lightweight Node.js signaling server is used only for peer discovery.
+
+
+2. Platform Requirements
+
+The application must be implemented as a Progressive Web App (PWA).
+
+Requirements:
+
+Installable on mobile devices
+Offline caching of core assets
+Fast loading
+App-like behavior
+
+Supported devices:
+
+Desktop browsers
+Mobile browsers
+Tablets
+
+
+3. Mobile Responsive Requirements
+
+The application must be fully responsive.
+
+UI must adapt to:
+
+Small mobile screens
+Tablet screens
+Desktop monitors
+
+All gameplay UI elements must scale proportionally.
+
+
+4. Orientation Requirement (Critical)
+
+The game must run ONLY in landscape orientation.
+
+If the device is in portrait mode:
+
+The game must pause and show an orientation overlay.
+
+Overlay message:
+
+"Please rotate your phone to landscape mode."
+
+The overlay must include:
+
+Rotate phone icon
+Short instruction text
+
+Gameplay must resume automatically once the device switches to landscape mode.
+
+
+5. Technology Stack
+
+Frontend
+
+Phaser 3
+TypeScript
+Matter.js
+
+Networking
+
+WebRTC DataChannels (P2P)
+
+Signaling
+
+Node.js
+WebSocket
+
+STUN Servers
+
+Google STUN infrastructure
+
+
+6. Game Design
+
+Arena
+
+Arena shape:
+
+Square field with 45° chamfered corners.
+
+Surface:
+
+Synthetic green football-style ground.
+
+
+Camera
+
+Camera mode:
+
+2.5D isometric top view.
+
+Properties:
+
+Fixed camera
+Slight depth illusion
+
+
+Players
+
+4 players exist in the match.
+
+Player colors:
+
+White
+Blue
+Orange
+Green
+
+Player units are shaped like gamepad strikers with circular bases.
+
+
+Ball
+
+Ball properties:
+
+Circle physics body
+Fully dynamic rigid body
+
+
+7. Gameplay Mechanics
+
+Player Movement
+
+Players can move only along their assigned linear rail axis.
+
+Movement axis:
+
+left ↔ right
+
+No free movement.
+
+
+Boost Mechanic
+
+Players can apply a boost impulse to the ball.
+
+Input:
+
+Space
+Touch Button
+
+Boost rules:
+
+Cooldown: 800ms
+Impulse force applied instantly
+
+
+8. Physics System
+
+Physics engine:
+
+Matter.js
+
+Ball physics parameters:
+
+Restitution: 0.9
+FrictionAir: 0.01
+Mass: 1
+
+
+Momentum Transfer
+
+When a player collides with the ball:
+
+ball_velocity += player_velocity
+
+
+9. Collision System
+
+Collision layers:
+
+BALL
+PLAYER
+ARENA
+GOAL
+
+Collision matrix:
+
+BALL ↔ PLAYER
+BALL ↔ ARENA
+BALL ↔ GOAL
+
+Player-to-player collision is disabled.
+
+
+10. Game Loop
+
+Simulation must run independently from rendering.
+
+Tick configuration:
+
+Simulation Tick: 60Hz
+Render: requestAnimationFrame (~60fps)
+Network Send Rate: 20Hz
+
+Game loop order:
+
+collectInputs()
+simulatePhysics()
+updateGameState()
+broadcastState()
+renderFrame()
+
+
+11. Network Architecture
+
+Network model:
+
+Host Authoritative Model
+
+Host responsibilities:
+
+Physics simulation
+Game state authority
+
+Clients:
+
+Send input
+Receive state
+
+
+Connection Flow
+
+Players
+  │
+  │ WebSocket
+  │
+Node Signaling Server
+  │
+  │ WebRTC Handshake
+  │
+Peer-to-Peer DataChannels
+
+The signaling server only forwards:
+
+offer
+answer
+ICE candidates
+
+Game data never passes through the signaling server.
+
+
+12. STUN Servers
+
+The game uses Google STUN servers.
+
+stun:stun.l.google.com:19302
+stun:stun1.l.google.com:19302
+stun:stun2.l.google.com:19302
+stun:stun3.l.google.com:19302
+stun:stun4.l.google.com:19302
+
+
+13. WebRTC DataChannel Configuration
+
+Data channel configuration:
+
+ordered: false
+maxRetransmits: 0
+
+This simulates UDP-like behaviour for lower latency.
+
+
+14. Game State Model
+
+Host maintains the authoritative game state.
+
+GameState
+
+tick: number
+
+ball
+x
+y
+vx
+vy
+
+players
+id
+position
+velocity
+boostCooldown
+
+score
+white
+blue
+orange
+green
+
+Game state is broadcast as immutable snapshots.
+
+
+15. Network Protocol
+
+Binary serialization must be used instead of JSON.
+
+State Packet size:
+
+~48 bytes
+
+Input Packet size:
+
+~8 bytes
+
+
+16. Client Side Prediction
+
+Clients locally simulate input to reduce perceived latency.
+
+Process:
+
+input → local simulate → render
+
+When server state arrives reconciliation is applied.
+
+
+17. Entity Interpolation
+
+Clients interpolate between received states.
+
+renderPosition = lerp(previousState, nextState, alpha)
+
+
+18. Clock Synchronization
+
+Host clock is authoritative.
+
+Clients synchronize with a simplified NTP-like clock sync system.
+
+
+19. Host Migration
+
+If host disconnects:
+
+Players sorted by playerId
+Lowest playerId becomes new host
+Last snapshot becomes base state
+
+
+20. Performance Optimizations
+
+Binary serialization:
+
+Float32Array
+
+Dirty state synchronization
+
+Object pooling for:
+
+ball trails
+collision particles
+goal flash effects
+
+
+21. Debug System
+
+Debug overlay displays:
+
+FPS
+Ping
+Packet Loss
+Tick Drift
+Interpolation Delay
+
+Hotkeys:
+
+F1 Network stats
+F2 Physics debug
+F3 Bounding boxes
+
+
+22. Future Extensions
+
+spectator mode
+replay system
+AI players
+tournament mode
+mobile controls

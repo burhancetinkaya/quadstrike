@@ -1,0 +1,25 @@
+{
+  "name": "QuadStrike",
+  "short_name": "QuadStrike",
+  "description": "A browser-based WebRTC multiplayer physics sports prototype.",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0b120d",
+  "theme_color": "#101b12",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "quadstrike",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "serve:signal": "node server/signaling-server.js"
+  },
+  "dependencies": {
+    "matter-js": "^0.20.0",
+    "phaser": "^3.90.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/matter-js": "^0.20.2",
+    "@types/node": "^22.13.14",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.8.2",
+    "vite": "^5.4.15"
+  }
+}

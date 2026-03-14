@@ -1,0 +1,281 @@
+import { ClockSynchronizer } from '../game/clock';
+import { serializeInputPacket, serializeStatePacket } from '../game/protocol';
+import type { GameSnapshot, InputFrame, NetworkStats, PlayerId, SessionInfo, SessionMode } from '../game/types';
+
+import type { PeerRosterEntry, SignalingMessage } from './signaling';
+import { SignalingClient } from './signaling';
+import { PeerLink } from './webrtc';
+
+export interface MatchNetworkCallbacks {
+  onStatus: (message: string) => void;
+  onSession: (info: SessionInfo, peers: PeerRosterEntry[]) => void;
+  onRemoteInput: (input: InputFrame) => void;
+  onSnapshot: (snapshot: GameSnapshot, receivedAt: number) => void;
+}
+
+const createStats = (): NetworkStats => ({
+  pingMs: 0,
+  packetLoss: 0,
+  tickDriftMs: 0,
+  interpolationDelayMs: 100,
+  connectedPeers: 0,
+});
+
+export class MatchNetwork {
+  private readonly signaling = new SignalingClient();
+
+  private readonly links = new Map<string, PeerLink>();
+
+  private readonly clockSync = new ClockSynchronizer();
+
+  private sessionInfo: SessionInfo = {
+    mode: 'practice',
+    roomId: null,
+    peerId: crypto.randomUUID(),
+    isHost: true,
+    localPlayerId: 0,
+  };
+
+  private peers: PeerRosterEntry[] = [];
+
+  private stats = createStats();
+
+  private lastStateSequence = 0;
+
+  private receivedStatePackets = 0;
+
+  private droppedStatePackets = 0;
+
+  private outgoingStateSequence = 0;
+
+  constructor(private readonly callbacks: MatchNetworkCallbacks) {
+    this.signaling.onMessage = (message) => {
+      void this.handleSignalingMessage(message);
+    };
+  }
+
+  async startHost(url: string, roomId: string): Promise<SessionInfo> {
+    this.resetConnections();
+    return await this.joinRoom(url, roomId, 'host');
+  }
+
+  async startClient(url: string, roomId: string): Promise<SessionInfo> {
+    this.resetConnections();
+    return await this.joinRoom(url, roomId, 'client');
+  }
+
+  broadcastState(snapshot: GameSnapshot): void {
+    if (!this.sessionInfo.isHost) {
+      return;
+    }
+
+    this.outgoingStateSequence += 1;
+    const payload = serializeStatePacket({
+      ...snapshot,
+      sequence: this.outgoingStateSequence,
+    });
+    this.links.forEach((link) => {
+      if (link.isOpen()) {
+        link.send(payload);
+      }
+    });
+  }
+
+  sendInput(input: InputFrame): void {
+    if (this.sessionInfo.isHost) {
+      return;
+    }
+
+    const hostLink = this.peers.find((peer) => peer.peerId !== this.sessionInfo.peerId && this.links.get(peer.peerId)?.isOpen());
+    if (!hostLink) {
+      return;
+    }
+
+    this.links.get(hostLink.peerId)?.send(serializeInputPacket(input));
+  }
+
+  getStats(): NetworkStats {
+    return { ...this.stats };
+  }
+
+  close(): void {
+    this.resetConnections();
+    this.stats = createStats();
+    this.sessionInfo = {
+      mode: 'practice',
+      roomId: null,
+      peerId: crypto.randomUUID(),
+      isHost: true,
+      localPlayerId: 0,
+    };
+    this.peers = [];
+  }
+
+  private async joinRoom(url: string, roomId: string, requestedMode: SessionMode): Promise<SessionInfo> {
+    const peerId = crypto.randomUUID();
+    const joined = await this.signaling.connect(url, roomId, peerId);
+    if (requestedMode === 'host' && !joined.isHost) {
+      this.signaling.leave();
+      throw new Error(`Room ${joined.roomId} already has a host. Join it as a client instead.`);
+    }
+
+    const mode: SessionMode = joined.isHost ? 'host' : 'client';
+
+    this.sessionInfo = {
+      mode,
+      roomId: joined.roomId,
+      peerId: joined.peerId,
+      isHost: joined.isHost,
+      localPlayerId: joined.playerId,
+    };
+    this.peers = joined.peers;
+    this.updateConnectedPeers();
+    this.callbacks.onSession(this.sessionInfo, this.peers);
+
+    if (joined.isHost && requestedMode === 'client') {
+      this.callbacks.onStatus(`No host existed in room ${joined.roomId}. You were promoted to host.`);
+    } else {
+      this.callbacks.onStatus(
+        joined.isHost
+          ? `Hosting room ${joined.roomId}. Share it with up to three more players.`
+          : `Joined room ${joined.roomId} as ${this.describePlayer(joined.playerId)}.`,
+      );
+    }
+
+    return this.sessionInfo;
+  }
+
+  private resetConnections(): void {
+    this.signaling.leave();
+    this.links.forEach((link) => link.close());
+    this.links.clear();
+    this.clockSync.reset();
+    this.lastStateSequence = 0;
+    this.receivedStatePackets = 0;
+    this.droppedStatePackets = 0;
+    this.outgoingStateSequence = 0;
+  }
+
+  private async handleSignalingMessage(message: SignalingMessage): Promise<void> {
+    if (message.type === 'joined') {
+      return;
+    }
+
+    if (message.type === 'peer-left') {
+      this.peers = message.peers;
+      this.links.get(message.peerId)?.close();
+      this.links.delete(message.peerId);
+      this.updateConnectedPeers();
+      this.callbacks.onSession(this.sessionInfo, this.peers);
+      this.callbacks.onStatus(`${message.peerId.slice(0, 8)} left room ${message.roomId}.`);
+      return;
+    }
+
+    if (message.type === 'peer-joined') {
+      this.peers = message.peers;
+      this.updateConnectedPeers();
+      this.callbacks.onSession(this.sessionInfo, this.peers);
+
+      if (this.sessionInfo.isHost && message.peerId !== this.sessionInfo.peerId) {
+        const link = this.ensureLink(message.peerId, true);
+        await link.startNegotiation();
+        this.callbacks.onStatus(`${message.peerId.slice(0, 8)} connected to room ${message.roomId}.`);
+      }
+      return;
+    }
+
+    if (message.type === 'host-migrated') {
+      this.peers = message.peers;
+      this.closePeerLinks();
+      this.sessionInfo = {
+        ...this.sessionInfo,
+        isHost: message.hostPeerId === this.sessionInfo.peerId,
+        mode: message.hostPeerId === this.sessionInfo.peerId ? 'host' : 'client',
+      };
+      this.updateConnectedPeers();
+      this.callbacks.onSession(this.sessionInfo, this.peers);
+
+      if (this.sessionInfo.isHost) {
+        this.callbacks.onStatus(`Host migrated to ${this.describePlayer(this.sessionInfo.localPlayerId)}.`);
+        await Promise.all(
+          this.peers
+            .filter((peer) => peer.peerId !== this.sessionInfo.peerId)
+            .map(async (peer) => {
+              const link = this.ensureLink(peer.peerId, true);
+              await link.startNegotiation();
+            }),
+        );
+      } else {
+        this.callbacks.onStatus('Host migrated. Waiting for the new host to resume authority.');
+      }
+      return;
+    }
+
+    if (message.type === 'signal') {
+      const initiator = false;
+      const link = this.ensureLink(message.fromPeerId, initiator);
+      await link.handleSignal(message.signal);
+    }
+  }
+
+  private ensureLink(remotePeerId: string, initiator: boolean): PeerLink {
+    const existing = this.links.get(remotePeerId);
+    if (existing) {
+      return existing;
+    }
+
+    const link = new PeerLink(initiator, {
+      onSignal: (signal) => {
+        this.signaling.sendSignal(remotePeerId, signal);
+      },
+      onInputPacket: (input) => {
+        if (this.sessionInfo.isHost) {
+          this.callbacks.onRemoteInput(input);
+        }
+      },
+      onStatePacket: (snapshot, receivedAt) => {
+        this.receivedStatePackets += 1;
+        if (this.lastStateSequence && snapshot.sequence > this.lastStateSequence + 1) {
+          this.droppedStatePackets += snapshot.sequence - this.lastStateSequence - 1;
+        }
+        this.lastStateSequence = snapshot.sequence;
+        this.stats.packetLoss =
+          this.receivedStatePackets + this.droppedStatePackets === 0
+            ? 0
+            : (this.droppedStatePackets / (this.receivedStatePackets + this.droppedStatePackets)) * 100;
+        this.stats.pingMs = Math.max(0, receivedAt - snapshot.hostTime);
+        this.clockSync.observeSnapshot(snapshot.tick * (1000 / 60), receivedAt);
+        this.stats.tickDriftMs = Math.abs(this.clockSync.getOffsetMs());
+        this.stats.interpolationDelayMs = snapshot.interpolationDelayMs;
+        this.callbacks.onSnapshot(snapshot, receivedAt);
+      },
+      onOpen: () => {
+        this.updateConnectedPeers();
+      },
+      onClose: () => {
+        this.links.delete(remotePeerId);
+        this.updateConnectedPeers();
+      },
+      onError: (message) => {
+        this.callbacks.onStatus(message);
+      },
+    });
+
+    this.links.set(remotePeerId, link);
+    return link;
+  }
+
+  private closePeerLinks(): void {
+    this.links.forEach((link) => link.close());
+    this.links.clear();
+  }
+
+  private updateConnectedPeers(): void {
+    const openConnections = [...this.links.values()].filter((link) => link.isOpen()).length;
+    this.stats.connectedPeers = this.sessionInfo.isHost ? openConnections : Number(openConnections > 0);
+  }
+
+  private describePlayer(playerId: PlayerId): string {
+    return ['White', 'Blue', 'Orange', 'Green'][playerId] ?? 'Unknown';
+  }
+}

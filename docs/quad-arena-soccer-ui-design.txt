@@ -1,0 +1,178 @@
+QuadStrike
+UI / UX Design Specification
+
+Version: 1.1
+
+
+1. Design Goals
+
+Fast multiplayer competitive experience.
+
+Primary goals:
+
+Minimal latency perception
+Clear game state visibility
+Simple multiplayer joining
+Mobile + desktop compatibility
+Arcade sports aesthetic
+
+
+2. Platform Requirements
+
+The UI must support Progressive Web App behavior.
+
+Requirements:
+
+Installable on mobile home screen
+Fullscreen web app mode
+Responsive UI layout
+
+
+3. Mobile Orientation Requirement
+
+The game must run in landscape mode only.
+
+If the phone is in portrait orientation:
+
+The game must show a blocking overlay.
+
+
+Overlay Content:
+
+Large rotate phone icon
+
+Message text:
+
+"Please rotate your phone to landscape mode."
+
+
+Overlay Layout
+
+--------------------------------
+        ROTATE YOUR PHONE
+
+   Please rotate your device
+   to landscape orientation
+   to continue playing.
+--------------------------------
+
+
+The overlay disappears automatically when orientation becomes landscape.
+
+
+4. Visual Style
+
+Arcade futuristic sports theme.
+
+Color palette:
+
+Primary Arena Green #2E7D32
+Accent Blue #2979FF
+Accent Orange #FF6D00
+Accent White #FFFFFF
+Accent Green #00C853
+Background Dark #0E0E0E
+UI Panels #1E1E1E
+
+
+5. Screen List
+
+Main Menu
+Lobby
+Match Waiting Room
+Gameplay Screen
+Goal Scored Overlay
+Match Result Screen
+Connection Lost Screen
+Settings Screen
+Rotate Phone Screen
+
+
+6. Rotate Phone Screen
+
+Purpose:
+
+Prevent gameplay in portrait orientation.
+
+Layout:
+
+--------------------------------
+
+        ROTATE PHONE
+
+   Please rotate your phone
+   to landscape mode
+
+      [Rotate Icon]
+
+--------------------------------
+
+Background:
+
+Dark blurred overlay.
+
+
+7. Gameplay Screen
+
+Landscape optimized.
+
+Layout:
+
+--------------------------------
+SCOREBOARD
+
+            ARENA VIEW
+
+BOOST BUTTON (mobile)
+--------------------------------
+
+Boost Button:
+
+bottom-right
+
+Circular neon button.
+
+
+8. HUD Elements
+
+Scoreboard
+Ping indicator
+FPS counter
+Boost cooldown indicator
+
+
+9. Mobile UI Rules
+
+Minimum touch target:
+
+48px
+
+UI must scale for different screens.
+
+No critical gameplay UI near screen edges.
+
+
+10. Animation System
+
+Button hover glow
+Goal flash animation
+Score pop animation
+Player highlight pulse
+
+Animation duration:
+
+100–300ms
+
+
+11. Accessibility
+
+Colorblind safe palette
+Readable scoreboard
+UI scaling support
+
+
+12. Design Constraints
+
+Maintain 60fps rendering
+Minimal UI clutter
+Clear gameplay visibility

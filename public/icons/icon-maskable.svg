@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="128" fill="#0b120d"/>
+  <g transform="translate(256 256)">
+    <polygon
+      points="-188,-92 -92,-188 92,-188 188,-92 188,92 92,188 -92,188 -188,92"
+      fill="#2e7d32"
+      stroke="#efffe7"
+      stroke-width="16"
+    />
+    <circle r="42" fill="#ffffff"/>
+    <path d="M-136 0h272M0 -136v272" stroke="#f2f8f1" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="0" cy="-136" r="26" fill="#ffffff"/>
+    <circle cx="136" cy="0" r="26" fill="#2979ff"/>
+    <circle cx="0" cy="136" r="26" fill="#ff6d00"/>
+    <circle cx="-136" cy="0" r="26" fill="#00c853"/>
+  </g>
+</svg>
