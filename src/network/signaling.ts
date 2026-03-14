@@ -1,4 +1,4 @@
-import type { PlayerId } from '../game/types';
+import type { MatchSize, PlayerId } from '../game/types';
 
 export interface PeerRosterEntry {
   peerId: string;
@@ -11,6 +11,7 @@ export type SignalingMessage =
       roomId: string;
       peerId: string;
       playerId: PlayerId;
+      matchSize: MatchSize;
       isHost: boolean;
       hostPeerId: string | null;
       peers: PeerRosterEntry[];
@@ -19,6 +20,7 @@ export type SignalingMessage =
       type: 'peer-joined' | 'peer-left' | 'host-migrated';
       roomId: string;
       peerId: string;
+      matchSize: MatchSize;
       hostPeerId: string | null;
       peers: PeerRosterEntry[];
     }
@@ -39,7 +41,12 @@ export class SignalingClient {
 
   onMessage?: (message: SignalingMessage) => void;
 
-  async connect(url: string, roomId: string, peerId: string): Promise<Extract<SignalingMessage, { type: 'joined' }>> {
+  async connect(
+    url: string,
+    roomId: string,
+    peerId: string,
+    matchSize?: MatchSize,
+  ): Promise<Extract<SignalingMessage, { type: 'joined' }>> {
     this.close();
 
     return await new Promise((resolve, reject) => {
@@ -61,6 +68,7 @@ export class SignalingClient {
             type: 'join',
             roomId,
             peerId,
+            matchSize,
           }),
         );
       });

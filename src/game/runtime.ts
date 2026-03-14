@@ -1,8 +1,9 @@
 import {
   ARENA_HALF_SIZE,
   BALL_RADIUS,
-  BOOST_CONTACT_EPSILON,
   CHAMFER_SIZE,
+  getActivePlayerIds,
+  isPlayerActive,
   NETWORK_SEND_HZ,
   PLAYER_DEFINITIONS,
   PLAYER_RADIUS,
@@ -14,7 +15,7 @@ import {
 } from './constants';
 import { ClientReplica } from './clientReplica';
 import { MatchSimulation } from './simulation';
-import type { GameSnapshot, InputFrame, NetworkStats, PlayerId, SessionInfo } from './types';
+import type { GameSnapshot, InputFrame, MatchSize, NetworkStats, PlayerId, SessionInfo } from './types';
 import { MatchNetwork } from '../network/session';
 import type { PeerRosterEntry } from '../network/signaling';
 
@@ -48,6 +49,7 @@ export class MatchRuntime {
 
   private readonly sessionInfo: SessionInfo = {
     mode: 'practice',
+    matchSize: 4,
     roomId: null,
     peerId: 'local-practice',
     isHost: true,
@@ -59,8 +61,6 @@ export class MatchRuntime {
   private sendAccumulator = 0;
 
   private localAxis: -1 | 0 | 1 = 0;
-
-  private boostQueued = false;
 
   private localSequence = 0;
 
@@ -79,18 +79,18 @@ export class MatchRuntime {
   private practiceActive = false;
 
   constructor(private readonly callbacks: RuntimeCallbacks) {
-    this.resetLocalPractice(false);
+    this.resetLocalPractice(4, false);
     this.callbacks.onStatus('Select Practice or Multiplayer to begin.');
   }
 
-  startPractice(): void {
-    this.resetLocalPractice(true);
-    this.callbacks.onStatus('Practice mode is live. Use A/D or Left/Right to move and Space to boost.');
+  startPractice(matchSize: MatchSize): void {
+    this.resetLocalPractice(matchSize, true);
+    this.callbacks.onStatus('Practice mode is live. Use A/D or Left/Right to move. Boost triggers automatically on contact.');
   }
 
-  async startHost(url: string, roomId: string): Promise<void> {
+  async startHost(url: string, roomId: string, matchSize: MatchSize): Promise<void> {
     this.practiceActive = false;
-    await this.network.startHost(url, roomId);
+    await this.network.startHost(url, roomId, matchSize);
   }
 
   async startClient(url: string, roomId: string): Promise<void> {
@@ -99,16 +99,12 @@ export class MatchRuntime {
   }
 
   leaveSession(): void {
-    this.resetLocalPractice(false);
+    this.resetLocalPractice(this.sessionInfo.matchSize, false);
     this.callbacks.onStatus('Session closed. Choose Practice or Multiplayer to continue.');
   }
 
   setMovementAxis(axis: -1 | 0 | 1): void {
     this.localAxis = axis;
-  }
-
-  queueBoost(): void {
-    this.boostQueued = true;
   }
 
   setPaused(paused: boolean): void {
@@ -154,11 +150,13 @@ export class MatchRuntime {
     return this.network.getStats();
   }
 
-  private resetLocalPractice(startPlaying: boolean): void {
+  private resetLocalPractice(matchSize: MatchSize, startPlaying: boolean): void {
     this.network.close();
     this.simulation = new MatchSimulation();
-    PLAYER_DEFINITIONS.forEach((player) => this.simulation.setPlayerConnected(player.id, true));
+    this.simulation.setMatchSize(matchSize);
+    PLAYER_DEFINITIONS.forEach((player) => this.simulation.setPlayerConnected(player.id, isPlayerActive(player.id, matchSize)));
     this.sessionInfo.mode = 'practice';
+    this.sessionInfo.matchSize = matchSize;
     this.sessionInfo.roomId = null;
     this.sessionInfo.peerId = 'local-practice';
     this.sessionInfo.isHost = true;
@@ -168,7 +166,6 @@ export class MatchRuntime {
     this.sendAccumulator = 0;
     this.localSequence = 0;
     this.localAxis = 0;
-    this.boostQueued = false;
     this.remoteInputs = [];
     this.lastReceivedSnapshot = null;
     this.practiceServeIndex = 0;
@@ -223,7 +220,7 @@ export class MatchRuntime {
       const input = this.buildInputFrame();
       this.replica.applyInput(input, FIXED_STEP_MS);
       this.sendAccumulator += FIXED_STEP_MS;
-      if (this.sendAccumulator >= NETWORK_STEP_MS || input.boost) {
+      if (this.sendAccumulator >= NETWORK_STEP_MS) {
         this.network.sendInput(input);
         this.sendAccumulator = Math.max(0, this.sendAccumulator - NETWORK_STEP_MS);
       }
@@ -242,11 +239,10 @@ export class MatchRuntime {
       playerId: this.sessionInfo.localPlayerId,
       sequence: this.localSequence,
       axis: this.localAxis,
-      boost: this.boostQueued,
+      boost: false,
       clientTime: Math.round(performance.now()),
     };
     this.localSequence += 1;
-    this.boostQueued = false;
     return input;
   }
 
@@ -254,7 +250,7 @@ export class MatchRuntime {
     const snapshot = this.simulation.getSnapshot();
 
     PLAYER_DEFINITIONS.forEach((definition) => {
-      if (definition.id === this.sessionInfo.localPlayerId) {
+      if (definition.id === this.sessionInfo.localPlayerId || !isPlayerActive(definition.id, this.sessionInfo.matchSize)) {
         return;
       }
 
@@ -262,16 +258,11 @@ export class MatchRuntime {
       const target = definition.axis === 'x' ? snapshot.ball.x : snapshot.ball.y;
       const delta = target - player.railPosition;
       const axis: -1 | 0 | 1 = Math.abs(delta) < 12 ? 0 : delta > 0 ? 1 : -1;
-      const distanceToBall = Math.hypot(
-        snapshot.ball.x - (definition.axis === 'x' ? player.railPosition : definition.fixedCoord),
-        snapshot.ball.y - (definition.axis === 'x' ? definition.fixedCoord : player.railPosition),
-      );
-
       this.simulation.applyInput({
         playerId: definition.id,
         sequence: 0,
         axis,
-        boost: distanceToBall <= PLAYER_RADIUS + BALL_RADIUS + BOOST_CONTACT_EPSILON && player.boostCooldownMs <= 0,
+        boost: false,
         clientTime: Math.round(performance.now()),
       });
     });
@@ -301,10 +292,10 @@ export class MatchRuntime {
 
   private kickoffPracticeBall(): void {
     const directions = [
-      { x: 11.5, y: 7.2 },
-      { x: -11.2, y: 7.6 },
-      { x: 10.8, y: -7.9 },
-      { x: -11.7, y: -7.3 },
+      { x: 9.2, y: 5.8 },
+      { x: -9.0, y: 6.1 },
+      { x: 8.8, y: -6.2 },
+      { x: -9.4, y: -5.9 },
     ];
     const direction = directions[this.practiceServeIndex % directions.length];
     this.practiceServeIndex += 1;
@@ -347,6 +338,7 @@ export class MatchRuntime {
 
   private handleSessionUpdate(info: SessionInfo, peers: PeerRosterEntry[]): void {
     this.sessionInfo.mode = info.mode;
+    this.sessionInfo.matchSize = info.matchSize;
     this.sessionInfo.roomId = info.roomId;
     this.sessionInfo.peerId = info.peerId;
     this.sessionInfo.isHost = info.isHost;
@@ -370,6 +362,7 @@ export class MatchRuntime {
 
   private promoteToHost(localPlayerId: PlayerId, baseSnapshot: GameSnapshot | null): void {
     this.sessionInfo.mode = this.sessionInfo.roomId ? 'host' : 'practice';
+    this.simulation.setMatchSize(this.sessionInfo.matchSize);
     this.sessionInfo.isHost = true;
     this.sessionInfo.localPlayerId = localPlayerId;
     this.simulation = new MatchSimulation();
@@ -380,7 +373,6 @@ export class MatchRuntime {
     this.sendAccumulator = 0;
     this.localSequence = 0;
     this.localAxis = 0;
-    this.boostQueued = false;
     this.remoteInputs = [];
     this.renderSnapshot = this.simulation.getSnapshot();
     this.callbacks.onSession({ ...this.sessionInfo });
@@ -393,7 +385,9 @@ export class MatchRuntime {
     }
 
     PLAYER_DEFINITIONS.forEach((player) => {
-      const connected = peers.some((peer) => peer.playerId === player.id) || this.sessionInfo.mode === 'practice';
+      const connected =
+        isPlayerActive(player.id, this.sessionInfo.matchSize) &&
+        (peers.some((peer) => peer.playerId === player.id) || this.sessionInfo.mode === 'practice');
       this.simulation.setPlayerConnected(player.id, connected);
     });
   }

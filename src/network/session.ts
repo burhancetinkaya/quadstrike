@@ -1,6 +1,6 @@
 import { ClockSynchronizer } from '../game/clock';
 import { serializeInputPacket, serializeStatePacket } from '../game/protocol';
-import type { GameSnapshot, InputFrame, NetworkStats, PlayerId, SessionInfo, SessionMode } from '../game/types';
+import type { GameSnapshot, InputFrame, MatchSize, NetworkStats, PlayerId, SessionInfo, SessionMode } from '../game/types';
 
 import type { PeerRosterEntry, SignalingMessage } from './signaling';
 import { SignalingClient } from './signaling';
@@ -30,6 +30,7 @@ export class MatchNetwork {
 
   private sessionInfo: SessionInfo = {
     mode: 'practice',
+    matchSize: 4,
     roomId: null,
     peerId: crypto.randomUUID(),
     isHost: true,
@@ -54,9 +55,9 @@ export class MatchNetwork {
     };
   }
 
-  async startHost(url: string, roomId: string): Promise<SessionInfo> {
+  async startHost(url: string, roomId: string, matchSize: MatchSize): Promise<SessionInfo> {
     this.resetConnections();
-    return await this.joinRoom(url, roomId, 'host');
+    return await this.joinRoom(url, roomId, 'host', matchSize);
   }
 
   async startClient(url: string, roomId: string): Promise<SessionInfo> {
@@ -103,6 +104,7 @@ export class MatchNetwork {
     this.stats = createStats();
     this.sessionInfo = {
       mode: 'practice',
+      matchSize: 4,
       roomId: null,
       peerId: crypto.randomUUID(),
       isHost: true,
@@ -111,9 +113,9 @@ export class MatchNetwork {
     this.peers = [];
   }
 
-  private async joinRoom(url: string, roomId: string, requestedMode: SessionMode): Promise<SessionInfo> {
+  private async joinRoom(url: string, roomId: string, requestedMode: SessionMode, matchSize?: MatchSize): Promise<SessionInfo> {
     const peerId = crypto.randomUUID();
-    const joined = await this.signaling.connect(url, roomId, peerId);
+    const joined = await this.signaling.connect(url, roomId, peerId, matchSize);
     if (requestedMode === 'host' && !joined.isHost) {
       this.signaling.leave();
       throw new Error(`Room ${joined.roomId} already has a host. Join it as a client instead.`);
@@ -123,6 +125,7 @@ export class MatchNetwork {
 
     this.sessionInfo = {
       mode,
+      matchSize: joined.matchSize,
       roomId: joined.roomId,
       peerId: joined.peerId,
       isHost: joined.isHost,
@@ -137,7 +140,7 @@ export class MatchNetwork {
     } else {
       this.callbacks.onStatus(
         joined.isHost
-          ? `Hosting room ${joined.roomId}. Share it with up to three more players.`
+          ? `Hosting a ${joined.matchSize}P room ${joined.roomId}.`
           : `Joined room ${joined.roomId} as ${this.describePlayer(joined.playerId)}.`,
       );
     }
@@ -163,6 +166,7 @@ export class MatchNetwork {
 
     if (message.type === 'peer-left') {
       this.peers = message.peers;
+      this.sessionInfo.matchSize = message.matchSize;
       this.links.get(message.peerId)?.close();
       this.links.delete(message.peerId);
       this.updateConnectedPeers();
@@ -173,6 +177,7 @@ export class MatchNetwork {
 
     if (message.type === 'peer-joined') {
       this.peers = message.peers;
+      this.sessionInfo.matchSize = message.matchSize;
       this.updateConnectedPeers();
       this.callbacks.onSession(this.sessionInfo, this.peers);
 
@@ -189,6 +194,7 @@ export class MatchNetwork {
       this.closePeerLinks();
       this.sessionInfo = {
         ...this.sessionInfo,
+        matchSize: message.matchSize,
         isHost: message.hostPeerId === this.sessionInfo.peerId,
         mode: message.hostPeerId === this.sessionInfo.peerId ? 'host' : 'client',
       };
@@ -276,6 +282,6 @@ export class MatchNetwork {
   }
 
   private describePlayer(playerId: PlayerId): string {
-    return ['White', 'Blue', 'Orange', 'Green'][playerId] ?? 'Unknown';
+    return ['Gold', 'Blue', 'Orange', 'Green'][playerId] ?? 'Unknown';
   }
 }

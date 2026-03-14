@@ -1,4 +1,5 @@
 export type PlayerId = 0 | 1 | 2 | 3;
+export type MatchSize = 2 | 4;
 export type RailSide = 'north' | 'east' | 'south' | 'west';
 export type RailAxis = 'x' | 'y';
 export type MatchPhase = 'playing' | 'goal';
@@ -76,6 +77,7 @@ export interface NetworkStats {
 
 export interface SessionInfo {
   mode: SessionMode;
+  matchSize: MatchSize;
   roomId: string | null;
   peerId: string;
   isHost: boolean;

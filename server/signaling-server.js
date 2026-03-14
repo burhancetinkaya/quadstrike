@@ -4,7 +4,7 @@ const port = Number(process.env.PORT ?? 8080);
 const wss = new WebSocketServer({ port });
 const OPEN = 1;
 
-/** @type {Map<string, { peers: Map<string, import('ws').WebSocket>, playerAssignments: Map<string, number>, hostPeerId: string | null }>} */
+/** @type {Map<string, { peers: Map<string, import('ws').WebSocket>, playerAssignments: Map<string, number>, hostPeerId: string | null, matchSize: 2 | 4 }>} */
 const rooms = new Map();
 
 const getRoom = (roomId) => {
@@ -14,6 +14,7 @@ const getRoom = (roomId) => {
       peers: new Map(),
       playerAssignments: new Map(),
       hostPeerId: null,
+      matchSize: 4,
     };
     rooms.set(roomId, room);
   }
@@ -34,8 +35,10 @@ const broadcast = (room, payload, excludePeerId = null) => {
   });
 };
 
+const getAllowedPlayerIds = (room) => (room.matchSize === 2 ? [0, 2] : [0, 1, 2, 3]);
+
 const getLowestFreePlayerId = (room) => {
-  for (let playerId = 0; playerId < 4; playerId += 1) {
+  for (const playerId of getAllowedPlayerIds(room)) {
     if (![...room.playerAssignments.values()].includes(playerId)) {
       return playerId;
     }
@@ -65,6 +68,7 @@ wss.on('connection', (socket) => {
     if (message.type === 'join') {
       roomId = String(message.roomId ?? '').trim().toUpperCase();
       peerId = String(message.peerId ?? '').trim();
+      const requestedMatchSize = message.matchSize === 2 ? 2 : message.matchSize === 4 ? 4 : null;
 
       if (!roomId || !peerId) {
         sendJson(socket, { type: 'error', message: 'roomId and peerId are required.' });
@@ -72,7 +76,16 @@ wss.on('connection', (socket) => {
       }
 
       const room = getRoom(roomId);
-      if (room.peers.size >= 4 && !room.peers.has(peerId)) {
+      if (room.peers.size === 0 && requestedMatchSize) {
+        room.matchSize = requestedMatchSize;
+      }
+
+      if (requestedMatchSize && room.peers.size > 0 && requestedMatchSize !== room.matchSize) {
+        sendJson(socket, { type: 'error', message: `Room is configured for ${room.matchSize} players.` });
+        return;
+      }
+
+      if (room.peers.size >= room.matchSize && !room.peers.has(peerId)) {
         sendJson(socket, { type: 'error', message: 'Room is full.' });
         return;
       }
@@ -95,6 +108,7 @@ wss.on('connection', (socket) => {
         roomId,
         peerId,
         playerId: assignedPlayerId,
+        matchSize: room.matchSize,
         isHost,
         hostPeerId: room.hostPeerId,
         peers: [...room.playerAssignments.entries()].map(([id, playerId]) => ({ peerId: id, playerId })),
@@ -106,6 +120,7 @@ wss.on('connection', (socket) => {
           type: 'peer-joined',
           roomId,
           peerId,
+          matchSize: room.matchSize,
           playerId: assignedPlayerId,
           hostPeerId: room.hostPeerId,
         },
@@ -166,6 +181,7 @@ wss.on('connection', (socket) => {
       type: hostChanged ? 'host-migrated' : 'peer-left',
       roomId,
       peerId,
+      matchSize: room.matchSize,
       hostPeerId: room.hostPeerId,
       peers: [...room.playerAssignments.entries()].map(([id, playerId]) => ({ peerId: id, playerId })),
     });

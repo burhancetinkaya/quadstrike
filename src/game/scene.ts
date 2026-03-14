@@ -1,8 +1,20 @@
 import Phaser from 'phaser';
 
-import { ARENA_HALF_SIZE, BALL_RADIUS, FIELD_POLYGON, GOAL_SEGMENTS, PLAYER_DEFINITIONS, PLAYER_RADIUS } from './constants';
+import {
+  ARENA_HALF_SIZE,
+  BALL_RADIUS,
+  CORNER_GOAL_COLOR,
+  CORNER_GOAL_SEGMENTS,
+  DISABLED_GOAL_COLOR,
+  FIELD_POLYGON,
+  GOAL_SEGMENTS,
+  isGoalSideActive,
+  isPlayerActive,
+  PLAYER_DEFINITIONS,
+  PLAYER_RADIUS,
+} from './constants';
 import { MatchRuntime } from './runtime';
-import type { GameSnapshot, PlayerDefinition, PlayerState, SessionInfo, Vec2 } from './types';
+import type { GameSnapshot, MatchSize, PlayerDefinition, PlayerState, RailSide, SessionInfo, Vec2 } from './types';
 
 export interface HudUpdate {
   snapshot: GameSnapshot;
@@ -20,8 +32,9 @@ type PlayerVisual = {
 
 type BallVisual = {
   container: Phaser.GameObjects.Container;
-  orb: Phaser.GameObjects.Arc;
+  body: Phaser.GameObjects.Image;
   shadow: Phaser.GameObjects.Ellipse;
+  spin: number;
 };
 
 const projectRailPosition = (definition: PlayerDefinition, railPosition: number): Vec2 =>
@@ -32,6 +45,8 @@ const projectRailPosition = (definition: PlayerDefinition, railPosition: number)
 const toColorNumber = (color: string): number => Phaser.Display.Color.HexStringToColor(color).color;
 
 export class ArenaScene extends Phaser.Scene {
+  private static readonly BALL_TEXTURE_KEY = 'soccer-ball';
+
   private fieldGraphics!: Phaser.GameObjects.Graphics;
 
   private debugGraphics!: Phaser.GameObjects.Graphics;
@@ -60,6 +75,8 @@ export class ArenaScene extends Phaser.Scene {
 
   private previousLastTouchedBy: number | null = null;
 
+  private currentMatchSize: MatchSize = 4;
+
   constructor(
     private readonly runtime: MatchRuntime,
     private readonly onHudUpdate: (payload: HudUpdate) => void,
@@ -69,6 +86,7 @@ export class ArenaScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#08130c');
+    this.ensureBallTexture();
 
     this.fieldGraphics = this.add.graphics();
     this.debugGraphics = this.add.graphics();
@@ -88,9 +106,123 @@ export class ArenaScene extends Phaser.Scene {
     this.handleResize();
   }
 
+  private ensureBallTexture(): void {
+    if (this.textures.exists(ArenaScene.BALL_TEXTURE_KEY)) {
+      return;
+    }
+
+    const size = 96;
+    const radius = 34;
+    const center = size / 2;
+    const canvasTexture = this.textures.createCanvas(ArenaScene.BALL_TEXTURE_KEY, size, size);
+    if (!canvasTexture) {
+      throw new Error('Failed to create soccer ball texture.');
+    }
+    const context = canvasTexture.context;
+    const ballCenterY = center - 2;
+
+    context.clearRect(0, 0, size, size);
+
+    context.fillStyle = 'rgba(0,0,0,0.16)';
+    context.beginPath();
+    context.ellipse(center, size - 11, 21, 7, 0, 0, Math.PI * 2);
+    context.fill();
+
+    const bodyGradient = context.createRadialGradient(center - 10, ballCenterY - 12, 6, center, ballCenterY, radius);
+    bodyGradient.addColorStop(0, '#ffffff');
+    bodyGradient.addColorStop(0.68, '#fafafa');
+    bodyGradient.addColorStop(1, '#d9d9df');
+    context.fillStyle = bodyGradient;
+    context.strokeStyle = 'rgba(20,20,20,0.18)';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(center, ballCenterY, radius, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+
+    const patches = [
+      { x: 0, y: 2, r: 11.5, rot: -Math.PI / 2, color: '#2a2d34' },
+      { x: -22, y: -18, r: 10.5, rot: -Math.PI / 2, color: '#3a3d44' },
+      { x: 20, y: -29, r: 9.5, rot: -Math.PI / 2, color: '#44474e' },
+      { x: 31, y: 10, r: 10.5, rot: -Math.PI / 2, color: '#2b2e35' },
+      { x: 8, y: 33, r: 10.5, rot: -Math.PI / 2, color: '#20242b' },
+      { x: -24, y: 28, r: 11, rot: -Math.PI / 2, color: '#1f2329' },
+    ];
+
+    const drawPatch = (x: number, y: number, r: number, rotation: number, color: string): void => {
+      const patchGradient = context.createRadialGradient(
+        center + x - r * 0.35,
+        ballCenterY + y - r * 0.45,
+        1,
+        center + x,
+        ballCenterY + y,
+        r * 1.8,
+      );
+      patchGradient.addColorStop(0, '#4b4e55');
+      patchGradient.addColorStop(1, color);
+      context.fillStyle = patchGradient;
+      context.beginPath();
+      for (let index = 0; index < 5; index += 1) {
+        const angle = rotation + (Math.PI * 2 * index) / 5;
+        const px = center + x + Math.cos(angle) * r;
+        const py = ballCenterY + y + Math.sin(angle) * r;
+        if (index === 0) {
+          context.moveTo(px, py);
+        } else {
+          context.lineTo(px, py);
+        }
+      }
+      context.closePath();
+      context.fill();
+    };
+
+    patches.forEach((patch) => drawPatch(patch.x, patch.y, patch.r, patch.rot, patch.color));
+
+    const seams = [
+      [-7, -9, -18, -15],
+      [7, -8, 17, -19],
+      [12, 9, 24, 11],
+      [4, 16, 7, 26],
+      [-10, 14, -17, 23],
+      [-15, -2, -26, -8],
+    ] as const;
+
+    context.strokeStyle = 'rgba(120,120,128,0.26)';
+    context.lineWidth = 3.2;
+    context.beginPath();
+    seams.forEach(([x1, y1, x2, y2]) => {
+      context.moveTo(center + x1, ballCenterY + y1);
+      context.lineTo(center + x2, ballCenterY + y2);
+    });
+    context.stroke();
+
+    const rimShade = context.createRadialGradient(center, ballCenterY, radius * 0.72, center, ballCenterY, radius + 2);
+    rimShade.addColorStop(0, 'rgba(0,0,0,0)');
+    rimShade.addColorStop(1, 'rgba(0,0,0,0.1)');
+    context.fillStyle = rimShade;
+    context.beginPath();
+    context.arc(center, ballCenterY, radius, 0, Math.PI * 2);
+    context.fill();
+
+    const shine = context.createRadialGradient(center - 12, ballCenterY - 14, 1, center - 12, ballCenterY - 14, 15);
+    shine.addColorStop(0, 'rgba(255,255,255,0.6)');
+    shine.addColorStop(1, 'rgba(255,255,255,0)');
+    context.fillStyle = shine;
+    context.beginPath();
+    context.arc(center - 9, ballCenterY - 12, 12, 0, Math.PI * 2);
+    context.fill();
+
+    canvasTexture.refresh();
+  }
+
   update(_time: number, delta: number): void {
     this.runtime.update(delta);
     const snapshot = this.runtime.getRenderSnapshot();
+    const session = this.runtime.getSessionInfo();
+    if (session.matchSize !== this.currentMatchSize) {
+      this.currentMatchSize = session.matchSize;
+      this.drawField();
+    }
 
     this.renderSnapshot(snapshot);
     this.updateGoalFlash(snapshot, delta);
@@ -98,7 +230,7 @@ export class ArenaScene extends Phaser.Scene {
 
     this.onHudUpdate({
       snapshot,
-      session: this.runtime.getSessionInfo(),
+      session,
       fps: this.game.loop.actualFps,
     });
   }
@@ -112,7 +244,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
-    this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.56);
+    this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.625);
     this.projectionScale = Math.min(this.scale.width / 1120, this.scale.height / 700);
     this.objectScale = Math.max(0.72, this.projectionScale);
     this.flashOverlay.setSize(this.scale.width, this.scale.height);
@@ -136,6 +268,7 @@ export class ArenaScene extends Phaser.Scene {
     this.strokePolygon(this.fieldGraphics, insetPoints, 0xbfe89d, 2);
 
     this.drawCenterMarkings();
+    this.drawCornerGoals();
     this.drawGoals();
   }
 
@@ -156,10 +289,23 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawGoals(): void {
-    Object.values(GOAL_SEGMENTS).forEach((segment) => {
+    Object.entries(GOAL_SEGMENTS).forEach(([side, segment]) => {
       const from = this.project(segment.from, 12);
       const to = this.project(segment.to, 12);
-      this.fieldGraphics.lineStyle(8, 0xf4fff4, 0.9);
+      this.fieldGraphics.lineStyle(8, isGoalSideActive(side as RailSide, this.currentMatchSize) ? 0xf4fff4 : DISABLED_GOAL_COLOR, 0.9);
+      this.fieldGraphics.beginPath();
+      this.fieldGraphics.moveTo(from.x, from.y);
+      this.fieldGraphics.lineTo(to.x, to.y);
+      this.fieldGraphics.strokePath();
+    });
+  }
+
+  private drawCornerGoals(): void {
+    this.fieldGraphics.lineStyle(8, CORNER_GOAL_COLOR, 0.88);
+
+    CORNER_GOAL_SEGMENTS.forEach((segment) => {
+      const from = this.project(segment.from, 12);
+      const to = this.project(segment.to, 12);
       this.fieldGraphics.beginPath();
       this.fieldGraphics.moveTo(from.x, from.y);
       this.fieldGraphics.lineTo(to.x, to.y);
@@ -186,7 +332,9 @@ export class ArenaScene extends Phaser.Scene {
     const ballPosition = this.project({ x: snapshot.ball.x, y: snapshot.ball.y }, 16 + lift);
     this.ballVisual.container.setPosition(ballPosition.x, ballPosition.y);
     this.ballVisual.container.setScale(this.objectScale);
-    this.ballVisual.orb.y = -(10 + lift * 0.35) * this.objectScale;
+    this.ballVisual.body.y = -(10 + lift * 0.35) * this.objectScale;
+    this.ballVisual.spin += (snapshot.ball.vx - snapshot.ball.vy) * 0.0024;
+    this.ballVisual.body.setRotation(this.ballVisual.spin);
     this.ballVisual.shadow.setScale(1 + Math.min(0.35, speed * 0.08), 1);
     this.ballVisual.container.setDepth(ballPosition.y + 40);
   }
@@ -196,11 +344,16 @@ export class ArenaScene extends Phaser.Scene {
     if (!visual) {
       return;
     }
+    if (!isPlayerActive(definition.id, this.currentMatchSize)) {
+      visual.container.setVisible(false);
+      return;
+    }
+    visual.container.setVisible(true);
 
     const world = projectRailPosition(definition, player.railPosition);
     const projected = this.project(world, 22);
     visual.container.setPosition(projected.x, projected.y);
-    visual.container.setScale(this.objectScale * (this.runtime.getSessionInfo().localPlayerId === player.id ? 1.08 : 1));
+    visual.container.setScale(this.objectScale);
     visual.container.setDepth(projected.y + 20);
     visual.container.setAlpha(player.connected ? 1 : 0.28);
     visual.ring.setStrokeStyle(
@@ -286,11 +439,9 @@ export class ArenaScene extends Phaser.Scene {
   private createBallVisual(): BallVisual {
     const container = this.add.container(0, 0).setDepth(200);
     const shadow = this.add.ellipse(0, 0, 70, 26, 0x000000, 0.24);
-    const orb = this.add.circle(0, -18, 19, 0xffffff, 1);
-    const seam = this.add.circle(0, -18, 19, 0xffffff, 0.03).setStrokeStyle(2, 0x1f2a30, 0.32);
-    const shine = this.add.circle(-6, -26, 5, 0xffffff, 0.55);
-    container.add([shadow, orb, seam, shine]);
-    return { container, orb, shadow };
+    const body = this.add.image(0, -18, ArenaScene.BALL_TEXTURE_KEY).setDisplaySize(48, 48);
+    container.add([shadow, body]);
+    return { container, body, shadow, spin: 0 };
   }
 
   private project(point: Vec2, lift: number): Phaser.Math.Vector2 {

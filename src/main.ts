@@ -3,12 +3,12 @@ import Phaser from 'phaser';
 import './styles.css';
 
 import { FRONTEND_CONFIG } from './config';
-import { PLAYER_DEFINITIONS } from './game/constants';
+import { getActivePlayerIds, MATCH_DURATION_MS, PLAYER_DEFINITIONS, SIMULATION_HZ } from './game/constants';
 import { ArenaScene } from './game/scene';
 import { MatchRuntime } from './game/runtime';
 import { observeLandscape } from './platform/orientation';
 import { registerServiceWorker } from './platform/pwa';
-import type { GameSnapshot } from './game/types';
+import type { GameSnapshot, MatchSize, SessionInfo } from './game/types';
 
 const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) {
@@ -26,7 +26,7 @@ root.innerHTML = `
       </div>
       <div class="topbar-status">
         <span>Mode <strong id="mode-value">Practice</strong></span>
-        <span>Player <strong id="player-value">White</strong></span>
+        <span>Player <strong id="player-value">Gold</strong></span>
         <span>Room <strong id="room-value">LOCAL</strong></span>
         <span>Connected <strong id="peers-value">0</strong></span>
       </div>
@@ -38,7 +38,11 @@ root.innerHTML = `
           <div id="game-root"></div>
           <div class="hud-layer">
             <div class="scoreboard" id="scoreboard"></div>
+            <div class="match-clock" id="match-clock">2:00</div>
             <div class="goal-toast" id="goal-toast">Goal</div>
+            <div class="countdown-overlay" id="countdown-overlay" aria-hidden="true">
+              <span class="countdown-value" id="countdown-value">3</span>
+            </div>
             <pre class="debug-overlay" id="debug-overlay"></pre>
             <div class="orientation-overlay" id="orientation-overlay">
               <div class="orientation-panel">
@@ -52,7 +56,6 @@ root.innerHTML = `
                 <button class="touch-button" id="move-left" aria-label="Move left">◀</button>
                 <button class="touch-button" id="move-right" aria-label="Move right">▶</button>
               </div>
-              <button class="boost-button" id="boost-button">Boost</button>
             </div>
           </div>
         </div>
@@ -74,6 +77,17 @@ root.innerHTML = `
       </aside>
     </main>
 
+    <div class="modal-shell" id="result-modal" aria-hidden="true">
+      <div class="modal-backdrop"></div>
+      <div class="modal-panel result-panel" role="dialog" aria-modal="true" aria-labelledby="result-modal-title">
+        <button class="modal-close" id="result-close" aria-label="Close result dialog">×</button>
+        <p class="modal-eyebrow">Match Finished</p>
+        <h2 id="result-modal-title">Winner</h2>
+        <p class="result-winner" id="result-winner">GOLD WINS</p>
+        <p class="modal-copy" id="result-summary">Conceded the fewest goals.</p>
+      </div>
+    </div>
+
     <div class="modal-shell" id="session-modal" aria-hidden="true">
       <div class="modal-backdrop" id="session-modal-backdrop"></div>
       <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
@@ -84,7 +98,14 @@ root.innerHTML = `
           Enter the room details and validate the signaling connection before starting.
         </p>
         <div class="control-grid modal-grid">
-          <div class="field">
+          <div class="field" id="session-match-size-field">
+            <label for="session-match-size">Match Size</label>
+            <select id="session-match-size">
+              <option value="2">2 Players</option>
+              <option value="4" selected>4 Players</option>
+            </select>
+          </div>
+          <div class="field" id="session-room-id-field">
             <label for="session-room-id">Room ID</label>
             <input id="session-room-id" value="${DEFAULT_ROOM_ID}" maxlength="8" />
           </div>
@@ -101,7 +122,10 @@ root.innerHTML = `
 
 const gameRoot = root.querySelector<HTMLDivElement>('#game-root');
 const scoreboard = root.querySelector<HTMLDivElement>('#scoreboard');
+const matchClock = root.querySelector<HTMLDivElement>('#match-clock');
 const goalToast = root.querySelector<HTMLDivElement>('#goal-toast');
+const countdownOverlay = root.querySelector<HTMLDivElement>('#countdown-overlay');
+const countdownValue = root.querySelector<HTMLSpanElement>('#countdown-value');
 const debugOverlay = root.querySelector<HTMLPreElement>('#debug-overlay');
 const statusText = root.querySelector<HTMLParagraphElement>('#status-text');
 const orientationOverlay = root.querySelector<HTMLDivElement>('#orientation-overlay');
@@ -115,7 +139,10 @@ const joinButton = root.querySelector<HTMLButtonElement>('#join-button');
 const leaveButton = root.querySelector<HTMLButtonElement>('#leave-button');
 const moveLeft = root.querySelector<HTMLButtonElement>('#move-left');
 const moveRight = root.querySelector<HTMLButtonElement>('#move-right');
-const boostButton = root.querySelector<HTMLButtonElement>('#boost-button');
+const resultModal = root.querySelector<HTMLDivElement>('#result-modal');
+const resultWinner = root.querySelector<HTMLParagraphElement>('#result-winner');
+const resultSummary = root.querySelector<HTMLParagraphElement>('#result-summary');
+const resultClose = root.querySelector<HTMLButtonElement>('#result-close');
 const sessionModal = root.querySelector<HTMLDivElement>('#session-modal');
 const sessionModalBackdrop = root.querySelector<HTMLDivElement>('#session-modal-backdrop');
 const sessionModalClose = root.querySelector<HTMLButtonElement>('#session-modal-close');
@@ -126,12 +153,18 @@ const sessionModalTitle = root.querySelector<HTMLElement>('#session-modal-title'
 const sessionModalCopy = root.querySelector<HTMLElement>('#session-modal-copy');
 const sessionModalFeedback = root.querySelector<HTMLParagraphElement>('#session-modal-feedback');
 const sessionRoomIdInput = root.querySelector<HTMLInputElement>('#session-room-id');
+const sessionRoomIdField = root.querySelector<HTMLDivElement>('#session-room-id-field');
+const sessionMatchSizeField = root.querySelector<HTMLDivElement>('#session-match-size-field');
+const sessionMatchSizeSelect = root.querySelector<HTMLSelectElement>('#session-match-size');
 const sessionModalGrid = root.querySelector<HTMLDivElement>('.modal-grid');
 
 if (
   !gameRoot ||
   !scoreboard ||
+  !matchClock ||
   !goalToast ||
+  !countdownOverlay ||
+  !countdownValue ||
   !debugOverlay ||
   !statusText ||
   !orientationOverlay ||
@@ -145,7 +178,10 @@ if (
   !leaveButton ||
   !moveLeft ||
   !moveRight ||
-  !boostButton ||
+  !resultModal ||
+  !resultWinner ||
+  !resultSummary ||
+  !resultClose ||
   !sessionModal ||
   !sessionModalBackdrop ||
   !sessionModalClose ||
@@ -156,6 +192,9 @@ if (
   !sessionModalCopy ||
   !sessionModalFeedback ||
   !sessionRoomIdInput ||
+  !sessionRoomIdField ||
+  !sessionMatchSizeField ||
+  !sessionMatchSizeSelect ||
   !sessionModalGrid
 ) {
   throw new Error('Failed to build the game shell.');
@@ -163,12 +202,27 @@ if (
 
 scoreboard.innerHTML = PLAYER_DEFINITIONS.map(
   (player) => `
-    <div class="score-card ${player.key}">
+    <div class="score-card ${player.key}" data-player-key="${player.key}" data-player-id="${player.id}">
+      <span class="crown" aria-hidden="true">♛</span>
       <span class="label">${player.label}</span>
       <span class="value" data-score="${player.key}">0</span>
     </div>
   `,
 ).join('');
+
+const scoreCards = PLAYER_DEFINITIONS.map((player) => {
+  const card = scoreboard.querySelector<HTMLDivElement>(`[data-player-key="${player.key}"]`);
+  const value = scoreboard.querySelector<HTMLElement>(`[data-score="${player.key}"]`);
+  if (!card || !value) {
+    throw new Error(`Missing scoreboard card for ${player.key}.`);
+  }
+
+  return {
+    definition: player,
+    card,
+    value,
+  };
+});
 
 const scoreValues = {
   white: scoreboard.querySelector<HTMLElement>('[data-score="white"]'),
@@ -178,10 +232,21 @@ const scoreValues = {
 };
 
 let runtime: MatchRuntime | undefined;
-let latestStatusMessage = 'Practice mode is live. Use A/D or Left/Right to move and Space to boost.';
+let latestStatusMessage = 'Select Practice or Multiplayer to begin.';
 let lastRoomId = DEFAULT_ROOM_ID;
+let lastMatchSize: MatchSize = 4;
 let sessionDialogMode: 'practice' | 'host' | 'join' | null = null;
 let sessionDialogPending = false;
+let countdownActive = false;
+let countdownRunId = 0;
+let isLandscape = true;
+let resultModalOpen = false;
+let matchFinished = false;
+let currentSessionInfo: SessionInfo | null = null;
+
+const syncRuntimePause = (): void => {
+  runtime?.setPaused(!isLandscape || countdownActive || resultModalOpen);
+};
 
 const setStatus = (message: string): void => {
   latestStatusMessage = message;
@@ -224,8 +289,11 @@ const openSessionDialog = (mode: 'practice' | 'host' | 'join'): void => {
   sessionDialogPending = false;
   sessionModal.classList.add('visible');
   sessionModal.setAttribute('aria-hidden', 'false');
-  sessionModalGrid.hidden = mode === 'practice';
+  sessionModalGrid.hidden = false;
   sessionRoomIdInput.value = lastRoomId;
+  sessionMatchSizeSelect.value = String(lastMatchSize);
+  sessionMatchSizeField.hidden = mode === 'join';
+  sessionRoomIdField.hidden = mode === 'practice';
   if (mode === 'practice') {
     sessionModalEyebrow.textContent = 'Practice Mode';
     sessionModalTitle.textContent = 'Start local practice';
@@ -256,6 +324,8 @@ const openSessionDialog = (mode: 'practice' | 'host' | 'join'): void => {
   }
 };
 
+const normalizeMatchSize = (value: string): MatchSize => (value === '2' ? 2 : 4);
+
 const getConfiguredSignalUrl = (): string => {
   const trimmed = FRONTEND_CONFIG.signalingUrl.trim();
   let parsed: URL;
@@ -283,9 +353,11 @@ const normalizeRoomId = (value: string): string => {
 runtime = new MatchRuntime({
   onStatus: (message) => setStatus(message),
   onSession: (session) => {
+    currentSessionInfo = session;
     modeValue.textContent = session.mode.toUpperCase();
     playerValue.textContent = PLAYER_DEFINITIONS[session.localPlayerId].label;
     roomValue.textContent = session.roomId ?? 'LOCAL';
+    lastMatchSize = session.matchSize;
   },
   onSnapshot: () => {
     if (!runtime) {
@@ -331,11 +403,141 @@ const showToast = (message: string, color = '#ffffff'): void => {
   goalToastTimer = window.setTimeout(() => goalToast.classList.remove('visible'), 1400);
 };
 
+const formatMatchClock = (snapshot: GameSnapshot): string => {
+  const elapsedMs = Math.min(MATCH_DURATION_MS, Math.round(snapshot.tick * (1000 / SIMULATION_HZ)));
+  const remainingMs = Math.max(0, MATCH_DURATION_MS - elapsedMs);
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const getWinnerSummary = (snapshot: GameSnapshot): { winnerText: string; summaryText: string } => {
+  const activePlayers = getActivePlayerIds(currentSessionInfo?.matchSize ?? 4);
+  const ranked = [...PLAYER_DEFINITIONS]
+    .filter((player) => activePlayers.includes(player.id))
+    .map((player) => ({
+      player,
+      conceded: snapshot.score[player.key],
+    }))
+    .sort((left, right) => {
+      if (left.conceded !== right.conceded) {
+        return left.conceded - right.conceded;
+      }
+      return left.player.id - right.player.id;
+    });
+
+  const best = ranked[0];
+  const tied = ranked.filter((entry) => entry.conceded === best.conceded);
+  if (tied.length > 1) {
+    return {
+      winnerText: 'DRAW',
+      summaryText: `${tied.map((entry) => entry.player.label).join(', ')} conceded the fewest goals with ${best.conceded}.`,
+    };
+  }
+
+  return {
+    winnerText: `${best.player.label} WINS`,
+    summaryText: `Conceded the fewest goals with ${best.conceded}.`,
+  };
+};
+
+const maybeShowMatchResult = (snapshot: GameSnapshot): void => {
+  const elapsedMs = Math.min(MATCH_DURATION_MS, Math.round(snapshot.tick * (1000 / SIMULATION_HZ)));
+  if (elapsedMs < MATCH_DURATION_MS || matchFinished) {
+    return;
+  }
+
+  matchFinished = true;
+  const result = getWinnerSummary(snapshot);
+  resultWinner.textContent = result.winnerText;
+  resultSummary.textContent = result.summaryText;
+  resultModal.classList.add('visible');
+  resultModal.setAttribute('aria-hidden', 'false');
+  resultModalOpen = true;
+  runtime?.leaveSession();
+  syncRuntimePause();
+};
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+const runStartCountdown = async (): Promise<void> => {
+  resultModal.classList.remove('visible');
+  resultModal.setAttribute('aria-hidden', 'true');
+  resultModalOpen = false;
+  matchFinished = false;
+  countdownRunId += 1;
+  const currentRun = countdownRunId;
+  countdownActive = true;
+  syncRuntimePause();
+  countdownOverlay.classList.add('visible');
+  countdownOverlay.setAttribute('aria-hidden', 'false');
+
+  for (const value of ['3', '2', '1']) {
+    if (currentRun !== countdownRunId) {
+      return;
+    }
+    countdownValue.textContent = value;
+    countdownValue.classList.remove('animate');
+    void countdownValue.offsetWidth;
+    countdownValue.classList.add('animate');
+    await delay(650);
+  }
+
+  if (currentRun !== countdownRunId) {
+    return;
+  }
+
+  countdownValue.textContent = '0';
+  countdownValue.classList.remove('animate');
+  void countdownValue.offsetWidth;
+  countdownValue.classList.add('animate');
+  countdownActive = false;
+  syncRuntimePause();
+  await delay(320);
+
+  if (currentRun !== countdownRunId) {
+    return;
+  }
+
+  countdownOverlay.classList.remove('visible');
+  countdownOverlay.setAttribute('aria-hidden', 'true');
+};
+
 const setScoreboard = (snapshot: GameSnapshot): void => {
+  matchClock.textContent = formatMatchClock(snapshot);
+  maybeShowMatchResult(snapshot);
   scoreValues.white!.textContent = String(snapshot.score.white);
   scoreValues.blue!.textContent = String(snapshot.score.blue);
   scoreValues.orange!.textContent = String(snapshot.score.orange);
   scoreValues.green!.textContent = String(snapshot.score.green);
+
+  const rankedCards = [...scoreCards].sort((left, right) => {
+    const leftScore = snapshot.score[left.definition.key];
+    const rightScore = snapshot.score[right.definition.key];
+    if (leftScore !== rightScore) {
+      return leftScore - rightScore;
+    }
+    return left.definition.id - right.definition.id;
+  });
+  const activePlayers = getActivePlayerIds(currentSessionInfo?.matchSize ?? 4);
+  const activeRankedCards = rankedCards.filter((entry) => activePlayers.includes(entry.definition.id));
+
+  activeRankedCards.forEach((entry, index) => {
+    entry.card.dataset.rank = String(index + 1);
+    entry.card.classList.toggle('leader', snapshot.score[entry.definition.key] === snapshot.score[activeRankedCards[0].definition.key]);
+    entry.card.hidden = false;
+    scoreboard.appendChild(entry.card);
+  });
+  scoreCards
+    .filter((entry) => !activePlayers.includes(entry.definition.id))
+    .forEach((entry) => {
+      entry.card.classList.remove('leader');
+      entry.card.hidden = true;
+    });
 
   const totalScore = snapshot.score.white + snapshot.score.blue + snapshot.score.orange + snapshot.score.green;
   if (totalScore !== lastGoalTotal) {
@@ -395,7 +597,6 @@ const preventTouchDefaults = (element: HTMLElement): void => {
 
 preventTouchDefaults(moveLeft);
 preventTouchDefaults(moveRight);
-preventTouchDefaults(boostButton);
 
 const bindTouchAxis = (button: HTMLElement, axis: -1 | 1): void => {
   const activate = (): void => {
@@ -424,7 +625,6 @@ const bindTouchAxis = (button: HTMLElement, axis: -1 | 1): void => {
 
 bindTouchAxis(moveLeft, -1);
 bindTouchAxis(moveRight, 1);
-boostButton.addEventListener('pointerdown', () => runtime?.queueBoost());
 
 window.addEventListener('keydown', (event) => {
   switch (event.code) {
@@ -437,10 +637,6 @@ window.addEventListener('keydown', (event) => {
     case 'KeyD':
       inputState.keyboardRight = true;
       applyMovementAxis();
-      break;
-    case 'Space':
-      event.preventDefault();
-      runtime?.queueBoost();
       break;
     case 'F1':
       event.preventDefault();
@@ -506,30 +702,36 @@ const submitSessionDialog = async (): Promise<void> => {
     sessionRoomIdInput.disabled = true;
 
     if (sessionDialogMode === 'practice') {
-      runtime.startPractice();
+      const matchSize = normalizeMatchSize(sessionMatchSizeSelect.value);
+      lastMatchSize = matchSize;
+      runtime.startPractice(matchSize);
       sessionModalFeedback.dataset.state = 'success';
       sessionModalFeedback.textContent = 'Practice is live.';
       showToast('PRACTICE LIVE', '#dcedc8');
+      closeSessionDialog();
+      void runStartCountdown();
+      return;
     } else if (sessionDialogMode === 'host') {
       const signalUrl = getConfiguredSignalUrl();
       const roomId = normalizeRoomId(sessionRoomIdInput.value);
-      await runtime.startHost(signalUrl, roomId);
+      const matchSize = normalizeMatchSize(sessionMatchSizeSelect.value);
+      lastMatchSize = matchSize;
+      await runtime.startHost(signalUrl, roomId, matchSize);
       sessionModalFeedback.dataset.state = 'success';
       sessionModalFeedback.textContent = `Connected. Room ${roomId} is ready to share.`;
+      closeSessionDialog();
+      void runStartCountdown();
+      return;
     } else {
       const signalUrl = getConfiguredSignalUrl();
       const roomId = normalizeRoomId(sessionRoomIdInput.value);
       await runtime.startClient(signalUrl, roomId);
       sessionModalFeedback.dataset.state = 'success';
       sessionModalFeedback.textContent = `Connected. Joined room ${roomId}.`;
-    }
-
-    window.setTimeout(() => {
-      if (!sessionDialogPending) {
-        return;
-      }
       closeSessionDialog();
-    }, 700);
+      void runStartCountdown();
+      return;
+    }
   } catch (error) {
     sessionDialogPending = false;
     sessionModalFeedback.dataset.state = 'error';
@@ -551,6 +753,12 @@ sessionModalSubmit.addEventListener('click', () => {
 sessionModalCancel.addEventListener('click', closeSessionDialog);
 sessionModalClose.addEventListener('click', closeSessionDialog);
 sessionModalBackdrop.addEventListener('click', closeSessionDialog);
+resultClose.addEventListener('click', () => {
+  resultModal.classList.remove('visible');
+  resultModal.setAttribute('aria-hidden', 'true');
+  resultModalOpen = false;
+  syncRuntimePause();
+});
 
 sessionRoomIdInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
@@ -565,8 +773,9 @@ leaveButton.addEventListener('click', () => {
 });
 
 observeLandscape((landscape) => {
+  isLandscape = landscape;
   orientationOverlay.classList.toggle('visible', !landscape);
-  runtime?.setPaused(!landscape);
+  syncRuntimePause();
 });
 
 window.addEventListener('keydown', (event) => {

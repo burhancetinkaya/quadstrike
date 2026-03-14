@@ -63,7 +63,8 @@ body::after {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -209,16 +210,16 @@ input {
 .scoreboard {
   position: absolute;
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 16px;
   display: grid;
   grid-template-columns: repeat(4, minmax(68px, 1fr));
   gap: 10px;
-  width: min(86%, 700px);
+  width: min(58%, 720px);
 }
 
 .score-card {
-  padding: 10px 12px 12px;
+  position: relative;
+  padding: 12px 14px 14px;
   border-radius: 18px;
   background: rgba(7, 14, 10, 0.66);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -226,22 +227,63 @@ input {
   text-align: center;
 }
 
+.score-card .crown {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%) scale(0.82);
+  opacity: 0;
+  color: #ffe082;
+  font-size: 1.5rem;
+  text-shadow: 0 8px 18px rgba(0, 0, 0, 0.38);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.score-card.leader {
+  border-color: rgba(255, 224, 130, 0.42);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
+}
+
+.score-card.leader .crown {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.08);
+}
+
 .score-card .label {
   display: block;
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   letter-spacing: 0.16em;
   opacity: 0.8;
 }
 
 .score-card .value {
   display: block;
-  margin-top: 4px;
-  font-size: clamp(1.1rem, 2.8vw, 1.8rem);
+  margin-top: 6px;
+  font-size: clamp(1.2rem, 2.6vw, 2rem);
   font-weight: 700;
 }
 
+.match-clock {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  min-width: 132px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: rgba(7, 14, 10, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  text-align: center;
+  font-size: clamp(1.4rem, 3.2vw, 2.25rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(14px);
+}
+
 .score-card.white {
-  color: var(--white);
+  color: #ffe39a;
 }
 
 .score-card.blue {
@@ -309,6 +351,62 @@ input {
 .goal-toast.visible {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+.countdown-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 14;
+  pointer-events: none;
+}
+
+.countdown-overlay.visible {
+  display: flex;
+}
+
+.countdown-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2em;
+  font-size: clamp(4.4rem, 12vw, 8rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #f7fff2;
+  text-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.42),
+    0 0 18px rgba(255, 255, 255, 0.18);
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.countdown-value.animate {
+  animation: countdown-pop 650ms ease forwards;
+}
+
+@keyframes countdown-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.42);
+  }
+
+  18% {
+    opacity: 1;
+    transform: scale(1.24);
+  }
+
+  62% {
+    opacity: 1;
+    transform: scale(0.94);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
 }
 
 .debug-overlay {
@@ -415,8 +513,7 @@ input {
   pointer-events: auto;
 }
 
-.touch-button,
-.boost-button {
+.touch-button {
   pointer-events: auto;
   border: 0;
   color: var(--text);
@@ -432,26 +529,6 @@ input {
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 18px 34px rgba(3, 7, 5, 0.45);
   font-size: 1.15rem;
-}
-
-.boost-button {
-  position: absolute;
-  right: 20px;
-  bottom: 20px;
-  width: 92px;
-  height: 92px;
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.2), transparent 35%),
-    linear-gradient(180deg, rgba(41, 121, 255, 0.96), rgba(16, 79, 180, 0.96));
-  box-shadow:
-    0 18px 34px rgba(3, 7, 5, 0.48),
-    0 0 0 6px rgba(41, 121, 255, 0.12);
-  font-size: 0.92rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 700;
-  display: none;
 }
 
 .control-card {
@@ -492,7 +569,8 @@ input {
   letter-spacing: 0.16em;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   padding: 12px 14px;
   border-radius: 14px;
@@ -590,6 +668,18 @@ input {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: linear-gradient(180deg, rgba(16, 32, 22, 0.98), rgba(8, 16, 11, 0.96));
   box-shadow: var(--glow);
+}
+
+.result-panel {
+  text-align: center;
+}
+
+.result-winner {
+  margin: 12px 0 10px;
+  font-size: clamp(1.8rem, 5vw, 3rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #f7fff2;
 }
 
 .modal-close {
@@ -709,7 +799,14 @@ input {
   }
 
   .scoreboard {
-    width: calc(100% - 32px);
+    width: calc(100% - 160px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .match-clock {
+    min-width: 120px;
+    padding: 10px 14px;
+    font-size: 1.3rem;
   }
 
   .modal-actions {
@@ -718,8 +815,7 @@ input {
 }
 
 @media (pointer: coarse) {
-  .move-buttons,
-  .boost-button {
+  .move-buttons {
     display: flex;
   }
 }

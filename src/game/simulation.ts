@@ -1,8 +1,10 @@
 import Matter from 'matter-js';
 
 import {
+  AUTO_BOOST_TRIGGER_MARGIN,
   ARENA_HALF_SIZE,
   BALL_RADIUS,
+  BALL_TRAVEL_SPEED,
   BALL_STUCK_POSITION_EPSILON,
   BALL_STUCK_SPEED_EPSILON,
   BALL_STUCK_TIMEOUT_MS,
@@ -13,16 +15,21 @@ import {
   GOAL_FREEZE_MS,
   GOAL_HALF_WIDTH,
   GOAL_SCORE_HALF_WIDTH,
+  GOAL_TRIGGER_HALF_WIDTH,
   INTERPOLATION_DELAY_MS,
+  isGoalSideActive,
+  MATCH_DURATION_MS,
   PLAYER_DEFINITIONS,
   PLAYER_RADIUS,
   PLAYER_SPEED,
+  SIMULATION_HZ,
   WALL_THICKNESS,
 } from './constants';
 import type {
   GameSnapshot,
   InputFrame,
   MatchPhase,
+  MatchSize,
   PlayerDefinition,
   PlayerId,
   PlayerState,
@@ -45,10 +52,14 @@ type InternalPlayer = {
   body: Matter.Body;
   state: PlayerState;
   desiredAxis: -1 | 0 | 1;
-  boostQueued: boolean;
 };
 
 type GoalSensor = {
+  side: RailSide;
+  body: Matter.Body;
+};
+
+type GoalBlocker = {
   side: RailSide;
   body: Matter.Body;
 };
@@ -66,6 +77,7 @@ const railToWorld = (definition: PlayerDefinition, railPosition: number): Vec2 =
     : { x: definition.fixedCoord, y: railPosition };
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+const FIXED_STEP_MS = 1000 / SIMULATION_HZ;
 
 export class MatchSimulation {
   readonly engine = Engine.create({
@@ -75,7 +87,7 @@ export class MatchSimulation {
 
   private readonly ball = Bodies.circle(0, 0, BALL_RADIUS, {
     restitution: 0.9,
-    frictionAir: 0.004,
+    frictionAir: 0,
     mass: 1,
     label: 'ball',
   });
@@ -83,6 +95,10 @@ export class MatchSimulation {
   private readonly players: InternalPlayer[];
 
   private readonly goalSensors: GoalSensor[];
+
+  private readonly goalBlockers: GoalBlocker[];
+
+  private matchSize: MatchSize = 4;
 
   private phase: MatchPhase = 'playing';
 
@@ -116,7 +132,6 @@ export class MatchSimulation {
         definition,
         body,
         desiredAxis: 0,
-        boostQueued: false,
         state: {
           id: definition.id,
           railPosition: definition.spawn,
@@ -128,12 +143,14 @@ export class MatchSimulation {
     });
 
     this.goalSensors = this.createGoalSensors();
+    this.goalBlockers = this.createGoalBlockers();
 
     Composite.add(this.engine.world, [
       ...this.createArenaBodies(),
       this.ball,
       ...this.players.map((player) => player.body),
       ...this.goalSensors.map((sensor) => sensor.body),
+      ...this.goalBlockers.map((blocker) => blocker.body),
     ]);
 
     Events.on(this.engine, 'collisionStart', (event: Matter.IEventCollision<Matter.Engine>) => {
@@ -141,15 +158,15 @@ export class MatchSimulation {
     });
 
     this.resetBodies();
+    this.syncGoalBlockers();
   }
 
   applyInput(input: InputFrame): void {
     const player = this.players[input.playerId];
-    if (!player) {
+    if (!player || !player.state.connected) {
       return;
     }
     player.desiredAxis = input.axis;
-    player.boostQueued = player.boostQueued || input.boost;
   }
 
   setPlayerConnected(playerId: PlayerId, connected: boolean): void {
@@ -158,10 +175,28 @@ export class MatchSimulation {
       return;
     }
     player.state.connected = connected;
+    player.desiredAxis = connected ? player.desiredAxis : 0;
+    player.state.velocity = connected ? player.state.velocity : 0;
+    player.body.collisionFilter.category = 0x0001;
+    player.body.collisionFilter.mask = connected ? 0xffffffff : 0;
+  }
+
+  setMatchSize(matchSize: MatchSize): void {
+    this.matchSize = matchSize;
+    this.syncGoalBlockers();
   }
 
   step(deltaMs: number, hostTime = performance.now()): GameSnapshot {
     this.tick += 1;
+
+    if (this.tick * FIXED_STEP_MS >= MATCH_DURATION_MS) {
+      this.players.forEach((player) => {
+        player.state.velocity = 0;
+        player.desiredAxis = 0;
+      });
+      Body.setVelocity(this.ball, { x: 0, y: 0 });
+      return this.createSnapshot(hostTime);
+    }
 
     if (this.phase === 'goal') {
       this.goalFreezeRemainingMs = Math.max(0, this.goalFreezeRemainingMs - deltaMs);
@@ -188,27 +223,9 @@ export class MatchSimulation {
       Body.setPosition(player.body, position);
     });
 
-    this.players.forEach((player) => {
-      if (!player.boostQueued || player.state.boostCooldownMs > 0) {
-        player.boostQueued = false;
-        return;
-      }
-
-      const delta = Vector.sub(this.ball.position, player.body.position);
-      const distance = Vector.magnitude(delta);
-      if (distance <= PLAYER_RADIUS + BALL_RADIUS + BOOST_CONTACT_EPSILON) {
-        const direction = distance === 0 ? { x: 0, y: 0 } : Vector.normalise(delta);
-        Body.applyForce(this.ball, this.ball.position, {
-          x: direction.x * BOOST_FORCE,
-          y: direction.y * BOOST_FORCE,
-        });
-        player.state.boostCooldownMs = BOOST_COOLDOWN_MS;
-        this.resetStuckDetection();
-      }
-      player.boostQueued = false;
-    });
-
+    this.applyAutomaticBoosts();
     Engine.update(this.engine, deltaMs);
+    this.normalizeBallSpeed();
     this.detectGoalFromBallPosition();
     this.constrainBallInsideArena();
     this.updateStuckDetection(deltaMs);
@@ -222,7 +239,8 @@ export class MatchSimulation {
 
   serveBall(direction: Vec2): void {
     Body.setPosition(this.ball, { x: 0, y: 0 });
-    Body.setVelocity(this.ball, direction);
+    const normalised = Vector.magnitude(direction) === 0 ? { x: BALL_TRAVEL_SPEED, y: 0 } : Vector.normalise(direction);
+    Body.setVelocity(this.ball, { x: normalised.x * BALL_TRAVEL_SPEED, y: normalised.y * BALL_TRAVEL_SPEED });
     this.resetStuckDetection();
   }
 
@@ -243,6 +261,7 @@ export class MatchSimulation {
       const position = railToWorld(player.definition, state.railPosition);
       Body.setPosition(player.body, position);
     });
+    this.syncGoalBlockers();
   }
 
   private createArenaBodies(): Matter.Body[] {
@@ -262,55 +281,63 @@ export class MatchSimulation {
         label: 'arena',
       });
 
+    const tryPushWall = (x: number, y: number, width: number, height: number, angle = 0): void => {
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+      bodies.push(createWall(x, y, width, height, angle));
+    };
+
+    tryPushWall(
+      -GOAL_HALF_WIDTH - horizontalSegmentLength * 0.5,
+      -ARENA_HALF_SIZE,
+      horizontalSegmentLength,
+      WALL_THICKNESS,
+    );
+    tryPushWall(
+      GOAL_HALF_WIDTH + horizontalSegmentLength * 0.5,
+      -ARENA_HALF_SIZE,
+      horizontalSegmentLength,
+      WALL_THICKNESS,
+    );
+    tryPushWall(
+      -GOAL_HALF_WIDTH - horizontalSegmentLength * 0.5,
+      ARENA_HALF_SIZE,
+      horizontalSegmentLength,
+      WALL_THICKNESS,
+    );
+    tryPushWall(
+      GOAL_HALF_WIDTH + horizontalSegmentLength * 0.5,
+      ARENA_HALF_SIZE,
+      horizontalSegmentLength,
+      WALL_THICKNESS,
+    );
+    tryPushWall(
+      -ARENA_HALF_SIZE,
+      -GOAL_HALF_WIDTH - verticalSegmentLength * 0.5,
+      WALL_THICKNESS,
+      verticalSegmentLength,
+    );
+    tryPushWall(
+      -ARENA_HALF_SIZE,
+      GOAL_HALF_WIDTH + verticalSegmentLength * 0.5,
+      WALL_THICKNESS,
+      verticalSegmentLength,
+    );
+    tryPushWall(
+      ARENA_HALF_SIZE,
+      -GOAL_HALF_WIDTH - verticalSegmentLength * 0.5,
+      WALL_THICKNESS,
+      verticalSegmentLength,
+    );
+    tryPushWall(
+      ARENA_HALF_SIZE,
+      GOAL_HALF_WIDTH + verticalSegmentLength * 0.5,
+      WALL_THICKNESS,
+      verticalSegmentLength,
+    );
+
     bodies.push(
-      createWall(
-        -GOAL_HALF_WIDTH - horizontalSegmentLength * 0.5,
-        -ARENA_HALF_SIZE,
-        horizontalSegmentLength,
-        WALL_THICKNESS,
-      ),
-      createWall(
-        GOAL_HALF_WIDTH + horizontalSegmentLength * 0.5,
-        -ARENA_HALF_SIZE,
-        horizontalSegmentLength,
-        WALL_THICKNESS,
-      ),
-      createWall(
-        -GOAL_HALF_WIDTH - horizontalSegmentLength * 0.5,
-        ARENA_HALF_SIZE,
-        horizontalSegmentLength,
-        WALL_THICKNESS,
-      ),
-      createWall(
-        GOAL_HALF_WIDTH + horizontalSegmentLength * 0.5,
-        ARENA_HALF_SIZE,
-        horizontalSegmentLength,
-        WALL_THICKNESS,
-      ),
-      createWall(
-        -ARENA_HALF_SIZE,
-        -GOAL_HALF_WIDTH - verticalSegmentLength * 0.5,
-        WALL_THICKNESS,
-        verticalSegmentLength,
-      ),
-      createWall(
-        -ARENA_HALF_SIZE,
-        GOAL_HALF_WIDTH + verticalSegmentLength * 0.5,
-        WALL_THICKNESS,
-        verticalSegmentLength,
-      ),
-      createWall(
-        ARENA_HALF_SIZE,
-        -GOAL_HALF_WIDTH - verticalSegmentLength * 0.5,
-        WALL_THICKNESS,
-        verticalSegmentLength,
-      ),
-      createWall(
-        ARENA_HALF_SIZE,
-        GOAL_HALF_WIDTH + verticalSegmentLength * 0.5,
-        WALL_THICKNESS,
-        verticalSegmentLength,
-      ),
       createWall(-diagonalOffset, -diagonalOffset, diagonalLength, WALL_THICKNESS, Math.PI / 4),
       createWall(diagonalOffset, -diagonalOffset, diagonalLength, WALL_THICKNESS, -Math.PI / 4),
       createWall(diagonalOffset, diagonalOffset, diagonalLength, WALL_THICKNESS, Math.PI / 4),
@@ -357,13 +384,53 @@ export class MatchSimulation {
     ];
   }
 
+  private createGoalBlockers(): GoalBlocker[] {
+    return [
+      {
+        side: 'north',
+        body: Bodies.rectangle(0, -ARENA_HALF_SIZE, GOAL_SCORE_HALF_WIDTH * 2, WALL_THICKNESS, {
+          isStatic: true,
+          label: 'goal-blocker:north',
+        }),
+      },
+      {
+        side: 'east',
+        body: Bodies.rectangle(ARENA_HALF_SIZE, 0, WALL_THICKNESS, GOAL_SCORE_HALF_WIDTH * 2, {
+          isStatic: true,
+          label: 'goal-blocker:east',
+        }),
+      },
+      {
+        side: 'south',
+        body: Bodies.rectangle(0, ARENA_HALF_SIZE, GOAL_SCORE_HALF_WIDTH * 2, WALL_THICKNESS, {
+          isStatic: true,
+          label: 'goal-blocker:south',
+        }),
+      },
+      {
+        side: 'west',
+        body: Bodies.rectangle(-ARENA_HALF_SIZE, 0, WALL_THICKNESS, GOAL_SCORE_HALF_WIDTH * 2, {
+          isStatic: true,
+          label: 'goal-blocker:west',
+        }),
+      },
+    ];
+  }
+
+  private syncGoalBlockers(): void {
+    this.goalBlockers.forEach((blocker) => {
+      blocker.body.collisionFilter.category = 0x0001;
+      blocker.body.collisionFilter.mask = isGoalSideActive(blocker.side, this.matchSize) ? 0 : 0xffffffff;
+    });
+  }
+
   private handleCollisionStart(event: Matter.IEventCollision<Matter.Engine>): void {
     event.pairs.forEach((pair: Matter.Pair) => {
       const labels = [pair.bodyA.label, pair.bodyB.label];
 
       if (labels.includes('ball') && labels.some((label) => label.startsWith('goal:'))) {
         const goalLabel = labels.find((label) => label.startsWith('goal:'));
-        if (goalLabel) {
+        if (goalLabel && isGoalSideActive(goalLabel.replace('goal:', '') as RailSide, this.matchSize)) {
           this.handleGoal(goalLabel.replace('goal:', '') as RailSide);
         }
       }
@@ -376,6 +443,9 @@ export class MatchSimulation {
 
       const playerId = Number(playerBody.label.split(':')[1]) as PlayerId;
       const player = this.players[playerId];
+      if (!player.state.connected) {
+        return;
+      }
       this.lastTouchedBy = playerId;
       this.resetStuckDetection();
 
@@ -385,9 +455,46 @@ export class MatchSimulation {
           : { x: 0, y: player.state.velocity };
 
       Body.setVelocity(this.ball, {
-        x: this.ball.velocity.x + playerVelocity.x * 0.065,
-        y: this.ball.velocity.y + playerVelocity.y * 0.065,
+        x: this.ball.velocity.x + playerVelocity.x * 0.05,
+        y: this.ball.velocity.y + playerVelocity.y * 0.05,
       });
+
+    });
+  }
+
+  private applyAutomaticBoosts(): void {
+    this.players.forEach((player) => {
+      if (!player.state.connected || player.state.boostCooldownMs > 0) {
+        return;
+      }
+
+      const delta = Vector.sub(this.ball.position, player.body.position);
+      const distance = Vector.magnitude(delta);
+      if (distance > PLAYER_RADIUS + BALL_RADIUS + AUTO_BOOST_TRIGGER_MARGIN) {
+        return;
+      }
+
+      const direction = distance === 0 ? { x: 0, y: 0 } : Vector.normalise(delta);
+      Body.applyForce(this.ball, this.ball.position, {
+        x: direction.x * BOOST_FORCE,
+        y: direction.y * BOOST_FORCE,
+      });
+      player.state.boostCooldownMs = BOOST_COOLDOWN_MS;
+      this.lastTouchedBy = player.definition.id;
+      this.resetStuckDetection();
+    });
+  }
+
+  private normalizeBallSpeed(): void {
+    const speed = Vector.magnitude(this.ball.velocity);
+    if (speed <= 0.0001) {
+      return;
+    }
+
+    const direction = Vector.normalise(this.ball.velocity);
+    Body.setVelocity(this.ball, {
+      x: direction.x * BALL_TRAVEL_SPEED,
+      y: direction.y * BALL_TRAVEL_SPEED,
     });
   }
 
@@ -395,14 +502,17 @@ export class MatchSimulation {
     if (this.phase === 'goal') {
       return;
     }
+    if (!isGoalSideActive(_side, this.matchSize)) {
+      return;
+    }
 
     this.phase = 'goal';
     this.goalFreezeRemainingMs = GOAL_FREEZE_MS;
     this.scorerId = this.lastTouchedBy;
 
-    if (this.scorerId !== null) {
-      const scorer = PLAYER_DEFINITIONS[this.scorerId];
-      this.score[scorer.key] += 1;
+    const concededPlayer = PLAYER_DEFINITIONS.find((player) => player.railSide === _side);
+    if (concededPlayer) {
+      this.score[concededPlayer.key] += 1;
     }
 
     Body.setVelocity(this.ball, { x: 0, y: 0 });
@@ -413,24 +523,28 @@ export class MatchSimulation {
       return;
     }
 
-    if (Math.abs(this.ball.position.x) <= GOAL_SCORE_HALF_WIDTH) {
+    if (isGoalSideActive('north', this.matchSize) && Math.abs(this.ball.position.x) <= GOAL_TRIGGER_HALF_WIDTH) {
       if (this.ball.position.y <= -ARENA_HALF_SIZE + BALL_RADIUS) {
         this.handleGoal('north');
         return;
       }
+    }
 
+    if (isGoalSideActive('south', this.matchSize) && Math.abs(this.ball.position.x) <= GOAL_TRIGGER_HALF_WIDTH) {
       if (this.ball.position.y >= ARENA_HALF_SIZE - BALL_RADIUS) {
         this.handleGoal('south');
         return;
       }
     }
 
-    if (Math.abs(this.ball.position.y) <= GOAL_SCORE_HALF_WIDTH) {
+    if (isGoalSideActive('west', this.matchSize) && Math.abs(this.ball.position.y) <= GOAL_TRIGGER_HALF_WIDTH) {
       if (this.ball.position.x <= -ARENA_HALF_SIZE + BALL_RADIUS) {
         this.handleGoal('west');
         return;
       }
+    }
 
+    if (isGoalSideActive('east', this.matchSize) && Math.abs(this.ball.position.y) <= GOAL_TRIGGER_HALF_WIDTH) {
       if (this.ball.position.x >= ARENA_HALF_SIZE - BALL_RADIUS) {
         this.handleGoal('east');
       }
@@ -442,7 +556,6 @@ export class MatchSimulation {
       player.state.railPosition = player.definition.spawn;
       player.state.velocity = 0;
       player.desiredAxis = 0;
-      player.boostQueued = false;
       const position = railToWorld(player.definition, player.definition.spawn);
       Body.setPosition(player.body, position);
     });
@@ -455,22 +568,28 @@ export class MatchSimulation {
   private constrainBallInsideArena(): void {
     const maxAxis = ARENA_HALF_SIZE - BALL_RADIUS;
     const diagonalLimit = (ARENA_HALF_SIZE + (ARENA_HALF_SIZE - CHAMFER_SIZE)) - BALL_RADIUS * Math.SQRT2;
+    const inVerticalGoalLane =
+      Math.abs(this.ball.position.x) <= GOAL_TRIGGER_HALF_WIDTH &&
+      (isGoalSideActive('north', this.matchSize) || isGoalSideActive('south', this.matchSize));
+    const inHorizontalGoalLane =
+      Math.abs(this.ball.position.y) <= GOAL_TRIGGER_HALF_WIDTH &&
+      (isGoalSideActive('east', this.matchSize) || isGoalSideActive('west', this.matchSize));
 
     let { x, y } = this.ball.position;
     let { x: vx, y: vy } = this.ball.velocity;
 
-    if (x > maxAxis) {
+    if (x > maxAxis && !inHorizontalGoalLane) {
       x = maxAxis;
       vx = -Math.abs(vx) * 0.96;
-    } else if (x < -maxAxis) {
+    } else if (x < -maxAxis && !inHorizontalGoalLane) {
       x = -maxAxis;
       vx = Math.abs(vx) * 0.96;
     }
 
-    if (y > maxAxis) {
+    if (y > maxAxis && !inVerticalGoalLane) {
       y = maxAxis;
       vy = -Math.abs(vy) * 0.96;
-    } else if (y < -maxAxis) {
+    } else if (y < -maxAxis && !inVerticalGoalLane) {
       y = -maxAxis;
       vy = Math.abs(vy) * 0.96;
     }
