@@ -76,10 +76,10 @@ wss.on('connection', (socket) => {
       return;
     }
 
-    if (message.type === 'join') {
+    if (message.type === 'join' || message.type === 'host') {
       roomId = String(message.roomId ?? '').trim().toUpperCase();
       peerId = String(message.peerId ?? '').trim();
-      const requestedMode = message.requestedMode === 'host' ? 'host' : 'client';
+      const requestedMode = message.type === 'host' || message.requestedMode === 'host' ? 'host' : 'client';
       const requestedMatchSize = message.matchSize === 2 ? 2 : message.matchSize === 4 ? 4 : null;
 
       if (!roomId || !peerId) {

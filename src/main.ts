@@ -17,28 +17,112 @@ if (!root) {
 
 const DEFAULT_ROOM_ID = 'ARENA';
 
+const ensureStitchFonts = (): void => {
+  const stylesheetId = 'quadstrike-stitch-fonts';
+  if (document.getElementById(stylesheetId)) {
+    return;
+  }
+
+  const appendLink = (id: string, rel: string, href: string, crossOrigin?: string): void => {
+    if (document.getElementById(id)) {
+      return;
+    }
+
+    const link = document.createElement('link');
+    link.id = id;
+    link.rel = rel;
+    link.href = href;
+    if (crossOrigin !== undefined) {
+      link.crossOrigin = crossOrigin;
+    }
+    document.head.appendChild(link);
+  };
+
+  appendLink('quadstrike-fonts-preconnect', 'preconnect', 'https://fonts.googleapis.com');
+  appendLink('quadstrike-fonts-preconnect-static', 'preconnect', 'https://fonts.gstatic.com', 'anonymous');
+  appendLink(
+    stylesheetId,
+    'stylesheet',
+    'https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600;700&display=swap',
+  );
+};
+
+ensureStitchFonts();
+
 root.innerHTML = `
   <div class="shell">
+    <div class="shell-noise" aria-hidden="true"></div>
+    <div class="shell-orb orb-emerald" aria-hidden="true"></div>
+    <div class="shell-orb orb-blue" aria-hidden="true"></div>
     <header class="topbar">
-      <div class="brand">
-        <h1>QuadStrike</h1>
-        <p>Host-authoritative WebRTC prototype with deterministic fixed-step physics.</p>
+      <div class="topbar-row topbar-row-primary">
+        <div class="brand">
+          <h1>QUAD<span>STRIKE</span></h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="practice-button">
+            <span class="button-dot"></span>
+            <span>Practice</span>
+          </button>
+          <button id="host-button" class="secondary">
+            <span class="button-icon">+</span>
+            <span>Create Match</span>
+          </button>
+          <button id="join-button" class="secondary">
+            <span class="button-icon">↗</span>
+            <span>Join Match</span>
+          </button>
+        </div>
       </div>
-      <div class="topbar-status">
-        <span>Mode <strong id="mode-value">Practice</strong></span>
-        <span>Player <strong id="player-value">Gold</strong></span>
-        <span>Room <strong id="room-value">LOCAL</strong></span>
-        <span>Connected <strong id="peers-value">0</strong></span>
+      <div class="topbar-row topbar-row-secondary">
+        <p class="footer-status" id="status-text"></p>
+        <div class="telemetry-strip">
+          <div class="metric-card compact">
+            <span class="metric-label">FPS</span>
+            <strong class="metric-value" id="fps-value">0</strong>
+          </div>
+          <div class="metric-card compact">
+            <span class="metric-label">Ping</span>
+            <strong class="metric-value" id="ping-value">0 ms</strong>
+          </div>
+          <div class="metric-card compact">
+            <span class="metric-label">Connected</span>
+            <strong class="metric-value" id="peers-value">0</strong>
+          </div>
+          <div class="metric-card compact network-card">
+            <span class="metric-label">Network</span>
+            <div class="network-pill" id="network-pill" data-state="local">
+              <span class="network-dot" aria-hidden="true"></span>
+              <strong id="network-value">LOCAL</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="session-state-hooks" hidden aria-hidden="true">
+        <span id="mode-value">Practice</span>
+        <span id="player-value">Gold</span>
+        <span id="room-value">LOCAL</span>
       </div>
     </header>
 
     <main class="layout">
+      <section class="match-header-wrap">
+        <div class="match-header">
+          <div class="scoreboard scoreboard-side" id="scoreboard-left"></div>
+          <div class="match-clock-panel">
+            <span class="match-clock-label">Time Remaining</span>
+            <div class="match-clock" id="match-clock">2:00</div>
+          </div>
+          <div class="scoreboard scoreboard-side scoreboard-side-right" id="scoreboard-right"></div>
+        </div>
+      </section>
+
       <section class="arena-card">
         <div class="game-frame">
+          <div class="arena-plate" aria-hidden="true"></div>
+          <div class="arena-grid" aria-hidden="true"></div>
           <div id="game-root"></div>
           <div class="hud-layer">
-            <div class="scoreboard" id="scoreboard"></div>
-            <div class="match-clock" id="match-clock">2:00</div>
             <div class="goal-toast" id="goal-toast">Goal</div>
             <div class="countdown-overlay" id="countdown-overlay" aria-hidden="true">
               <span class="countdown-value" id="countdown-value">3</span>
@@ -66,21 +150,6 @@ root.innerHTML = `
           </div>
         </div>
       </section>
-
-      <aside class="control-card">
-        <h2 class="card-title">Session Control</h2>
-        <p class="session-intro">
-          Use Practice Mode for a local bot match, Create Multiplayer Match to host a room, and Join Multiplayer Match to connect to an existing one.
-        </p>
-        <div class="button-row">
-          <button id="practice-button">Practice Mode</button>
-          <button id="host-button" class="secondary">Create Multiplayer Match</button>
-          <button id="join-button" class="secondary">Join Multiplayer Match</button>
-          <button id="leave-button" class="ghost">Leave Room</button>
-        </div>
-
-        <p class="footer-status" id="status-text"></p>
-      </aside>
     </main>
 
     <div class="modal-shell" id="result-modal" aria-hidden="true">
@@ -127,7 +196,8 @@ root.innerHTML = `
 `;
 
 const gameRoot = root.querySelector<HTMLDivElement>('#game-root');
-const scoreboard = root.querySelector<HTMLDivElement>('#scoreboard');
+const scoreboardLeft = root.querySelector<HTMLDivElement>('#scoreboard-left');
+const scoreboardRight = root.querySelector<HTMLDivElement>('#scoreboard-right');
 const matchClock = root.querySelector<HTMLDivElement>('#match-clock');
 const goalToast = root.querySelector<HTMLDivElement>('#goal-toast');
 const countdownOverlay = root.querySelector<HTMLDivElement>('#countdown-overlay');
@@ -142,10 +212,13 @@ const modeValue = root.querySelector<HTMLElement>('#mode-value');
 const playerValue = root.querySelector<HTMLElement>('#player-value');
 const roomValue = root.querySelector<HTMLElement>('#room-value');
 const peersValue = root.querySelector<HTMLElement>('#peers-value');
+const fpsValue = root.querySelector<HTMLElement>('#fps-value');
+const pingValue = root.querySelector<HTMLElement>('#ping-value');
+const networkPill = root.querySelector<HTMLDivElement>('#network-pill');
+const networkValue = root.querySelector<HTMLElement>('#network-value');
 const practiceButton = root.querySelector<HTMLButtonElement>('#practice-button');
 const hostButton = root.querySelector<HTMLButtonElement>('#host-button');
 const joinButton = root.querySelector<HTMLButtonElement>('#join-button');
-const leaveButton = root.querySelector<HTMLButtonElement>('#leave-button');
 const moveLeft = root.querySelector<HTMLButtonElement>('#move-left');
 const moveRight = root.querySelector<HTMLButtonElement>('#move-right');
 const resultModal = root.querySelector<HTMLDivElement>('#result-modal');
@@ -169,7 +242,8 @@ const sessionModalGrid = root.querySelector<HTMLDivElement>('.modal-grid');
 
 if (
   !gameRoot ||
-  !scoreboard ||
+  !scoreboardLeft ||
+  !scoreboardRight ||
   !matchClock ||
   !goalToast ||
   !countdownOverlay ||
@@ -184,10 +258,13 @@ if (
   !playerValue ||
   !roomValue ||
   !peersValue ||
+  !fpsValue ||
+  !pingValue ||
+  !networkPill ||
+  !networkValue ||
   !practiceButton ||
   !hostButton ||
   !joinButton ||
-  !leaveButton ||
   !moveLeft ||
   !moveRight ||
   !resultModal ||
@@ -212,19 +289,26 @@ if (
   throw new Error('Failed to build the game shell.');
 }
 
-scoreboard.innerHTML = PLAYER_DEFINITIONS.map(
-  (player) => `
+const buildScoreCard = (playerId: 0 | 1 | 2 | 3): string => {
+  const player = PLAYER_DEFINITIONS[playerId];
+  return `
     <div class="score-card ${player.key}" data-player-key="${player.key}" data-player-id="${player.id}">
       <span class="crown" aria-hidden="true">♛</span>
-      <span class="label">${player.label}</span>
-      <span class="value" data-score="${player.key}">0</span>
+      <span class="score-chip" aria-hidden="true"><span class="score-chip-dot"></span></span>
+      <div class="score-copy">
+        <span class="label">${player.label}</span>
+        <span class="value" data-score="${player.key}">0</span>
+      </div>
     </div>
-  `,
-).join('');
+  `;
+};
+
+scoreboardLeft.innerHTML = ([0, 2] as const).map((playerId) => buildScoreCard(playerId)).join('');
+scoreboardRight.innerHTML = ([3, 1] as const).map((playerId) => buildScoreCard(playerId)).join('');
 
 const scoreCards = PLAYER_DEFINITIONS.map((player) => {
-  const card = scoreboard.querySelector<HTMLDivElement>(`[data-player-key="${player.key}"]`);
-  const value = scoreboard.querySelector<HTMLElement>(`[data-score="${player.key}"]`);
+  const card = root.querySelector<HTMLDivElement>(`[data-player-key="${player.key}"]`);
+  const value = root.querySelector<HTMLElement>(`[data-score="${player.key}"]`);
   if (!card || !value) {
     throw new Error(`Missing scoreboard card for ${player.key}.`);
   }
@@ -237,10 +321,10 @@ const scoreCards = PLAYER_DEFINITIONS.map((player) => {
 });
 
 const scoreValues = {
-  white: scoreboard.querySelector<HTMLElement>('[data-score="white"]'),
-  blue: scoreboard.querySelector<HTMLElement>('[data-score="blue"]'),
-  orange: scoreboard.querySelector<HTMLElement>('[data-score="orange"]'),
-  green: scoreboard.querySelector<HTMLElement>('[data-score="green"]'),
+  white: root.querySelector<HTMLElement>('[data-score="white"]'),
+  blue: root.querySelector<HTMLElement>('[data-score="blue"]'),
+  orange: root.querySelector<HTMLElement>('[data-score="orange"]'),
+  green: root.querySelector<HTMLElement>('[data-score="green"]'),
 };
 
 let runtime: MatchRuntime | undefined;
@@ -259,6 +343,39 @@ let currentSessionInfo: SessionInfo | null = null;
 let networkCountdownTimer = 0;
 let networkCountdownStartAtMs: number | null = null;
 let networkCountdownValue: string | null = null;
+
+const updateMetricsHud = (session: SessionInfo, fps = 0): void => {
+  const stats = runtime?.getNetworkStats() ?? {
+    pingMs: 0,
+    packetLoss: 0,
+    tickDriftMs: 0,
+    interpolationDelayMs: 0,
+    connectedPeers: 0,
+  };
+
+  fpsValue.textContent = fps > 0 ? fps.toFixed(0) : '0';
+  pingValue.textContent = `${stats.pingMs.toFixed(0)} ms`;
+  peersValue.textContent = String(stats.connectedPeers);
+
+  const networkState =
+    session.mode === 'practice'
+      ? 'LOCAL'
+      : session.lobbyState === 'live'
+        ? 'STABLE'
+        : session.lobbyState === 'countdown'
+          ? 'SYNCING'
+          : 'WAITING';
+
+  networkValue.textContent = networkState;
+  networkPill.dataset.state =
+    session.mode === 'practice'
+      ? 'local'
+      : session.lobbyState === 'live'
+        ? 'live'
+        : session.lobbyState === 'countdown'
+          ? 'countdown'
+          : 'waiting';
+};
 
 const syncRuntimePause = (): void => {
   runtime?.setPaused(!isLandscape || resultModalOpen || (countdownActive && countdownMode === 'practice'));
@@ -491,6 +608,7 @@ runtime = new MatchRuntime({
     playerValue.textContent = PLAYER_DEFINITIONS[session.localPlayerId].label;
     roomValue.textContent = session.roomId ?? 'LOCAL';
     lastMatchSize = session.matchSize;
+    updateMetricsHud(session);
     syncLobbyPresentation(session);
     syncRuntimePause();
   },
@@ -500,12 +618,18 @@ runtime = new MatchRuntime({
     }
     const stats = runtime.getNetworkStats();
     peersValue.textContent = String(stats.connectedPeers);
+    if (currentSessionInfo) {
+      updateMetricsHud(currentSessionInfo);
+    }
   },
 });
 
 if (!runtime) {
   throw new Error('Failed to initialize the match runtime.');
 }
+
+statusText.textContent = latestStatusMessage;
+updateMetricsHud(runtime.getSessionInfo());
 
 let lastGoalTotal = 0;
 let goalToastTimer = 0;
@@ -662,19 +786,22 @@ const setScoreboard = (snapshot: GameSnapshot): void => {
       ? getActivePlayerIds(currentSessionInfo.matchSize)
       : (currentSessionInfo?.connectedPlayerIds ?? [0]);
   const activeRankedCards = rankedCards.filter((entry) => visiblePlayers.includes(entry.definition.id));
+  const leaderScore =
+    activeRankedCards.length > 0 ? snapshot.score[activeRankedCards[0].definition.key] : Number.POSITIVE_INFINITY;
 
-  activeRankedCards.forEach((entry, index) => {
-    entry.card.dataset.rank = String(index + 1);
-    entry.card.classList.toggle('leader', snapshot.score[entry.definition.key] === snapshot.score[activeRankedCards[0].definition.key]);
-    entry.card.hidden = false;
-    scoreboard.appendChild(entry.card);
-  });
-  scoreCards
-    .filter((entry) => !visiblePlayers.includes(entry.definition.id))
-    .forEach((entry) => {
+  scoreCards.forEach((entry) => {
+    const visible = visiblePlayers.includes(entry.definition.id);
+    entry.card.hidden = !visible;
+    if (!visible) {
       entry.card.classList.remove('leader');
-      entry.card.hidden = true;
-    });
+      entry.card.dataset.rank = '';
+      return;
+    }
+
+    const rank = activeRankedCards.findIndex((candidate) => candidate.definition.id === entry.definition.id);
+    entry.card.dataset.rank = String(rank + 1);
+    entry.card.classList.toggle('leader', snapshot.score[entry.definition.key] === leaderScore);
+  });
 
   const totalScore = snapshot.score.white + snapshot.score.blue + snapshot.score.orange + snapshot.score.green;
   if (totalScore !== lastGoalTotal) {
@@ -692,6 +819,7 @@ const scene = new ArenaScene(runtime, ({ snapshot, session, fps }) => {
 
   const stats = runtime.getNetworkStats();
   peersValue.textContent = String(stats.connectedPeers);
+  updateMetricsHud(session, fps);
 
   debugOverlay.textContent = [
     `FPS: ${fps.toFixed(0)}`,
@@ -900,11 +1028,6 @@ sessionRoomIdInput.addEventListener('keydown', (event) => {
     event.preventDefault();
     void submitSessionDialog();
   }
-});
-
-leaveButton.addEventListener('click', () => {
-  closeSessionDialog();
-  runtime?.leaveSession();
 });
 
 observeLandscape((landscape) => {

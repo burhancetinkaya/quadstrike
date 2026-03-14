@@ -21,6 +21,28 @@ const createStats = (): NetworkStats => ({
   connectedPeers: 0,
 });
 
+const createPeerId = (): string => {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.randomUUID) {
+    return cryptoApi.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+};
+
 export class MatchNetwork {
   private readonly signaling = new SignalingClient();
 
@@ -36,7 +58,7 @@ export class MatchNetwork {
     lobbyState: 'waiting',
     countdownStartAtMs: null,
     roomId: null,
-    peerId: crypto.randomUUID(),
+    peerId: createPeerId(),
     isHost: true,
     localPlayerId: 0,
   };
@@ -122,7 +144,7 @@ export class MatchNetwork {
       lobbyState: 'waiting',
       countdownStartAtMs: null,
       roomId: null,
-      peerId: crypto.randomUUID(),
+      peerId: createPeerId(),
       isHost: true,
       localPlayerId: 0,
     };
@@ -130,7 +152,7 @@ export class MatchNetwork {
   }
 
   private async joinRoom(url: string, roomId: string, requestedMode: SessionMode, matchSize?: MatchSize): Promise<SessionInfo> {
-    const peerId = crypto.randomUUID();
+    const peerId = createPeerId();
     const joined = await this.signaling.connect(url, roomId, peerId, requestedMode, matchSize);
     if (requestedMode === 'host' && !joined.isHost) {
       this.signaling.leave();

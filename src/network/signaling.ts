@@ -56,6 +56,43 @@ export class SignalingClient {
   ): Promise<Extract<SignalingMessage, { type: 'joined' }>> {
     this.close();
 
+    const primaryPayload =
+      requestedMode === 'host'
+        ? {
+            type: 'host',
+            roomId,
+            peerId,
+            matchSize,
+          }
+        : {
+            type: 'join',
+            roomId,
+            peerId,
+            requestedMode: 'client',
+          };
+
+    try {
+      return await this.connectOnce(url, primaryPayload);
+    } catch (error) {
+      if (!this.shouldRetryLegacyHostConnect(requestedMode, error)) {
+        throw error;
+      }
+    }
+
+    this.close();
+    return await this.connectOnce(url, {
+      type: 'join',
+      roomId,
+      peerId,
+      requestedMode: 'host',
+      matchSize,
+    });
+  }
+
+  private async connectOnce(
+    url: string,
+    payload: Record<string, MatchSize | SessionMode | string | undefined>,
+  ): Promise<Extract<SignalingMessage, { type: 'joined' }>> {
     return await new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
       let settled = false;
@@ -70,15 +107,7 @@ export class SignalingClient {
       };
 
       socket.addEventListener('open', () => {
-        socket.send(
-          JSON.stringify({
-            type: 'join',
-            roomId,
-            peerId,
-            requestedMode,
-            matchSize: requestedMode === 'host' ? matchSize : undefined,
-          }),
-        );
+        socket.send(JSON.stringify(payload));
       });
 
       socket.addEventListener('message', (event) => {
@@ -113,6 +142,17 @@ export class SignalingClient {
         }
       });
     });
+  }
+
+  private shouldRetryLegacyHostConnect(requestedMode: SessionMode, error: unknown): boolean {
+    if (requestedMode !== 'host' || !(error instanceof Error)) {
+      return false;
+    }
+
+    return (
+      error.message.includes('Join a room before sending other messages.') ||
+      error.message.includes('was not found.')
+    );
   }
 
   sendSignal(targetPeerId: string, signal: unknown): void {

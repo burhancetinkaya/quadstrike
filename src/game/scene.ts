@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import {
   ARENA_HALF_SIZE,
   BALL_RADIUS,
+  CHAMFER_SIZE,
   CORNER_GOAL_COLOR,
   CORNER_GOAL_SEGMENTS,
   DISABLED_GOAL_COLOR,
@@ -43,6 +44,16 @@ const projectRailPosition = (definition: PlayerDefinition, railPosition: number)
     : { x: definition.fixedCoord, y: railPosition };
 
 const toColorNumber = (color: string): number => Phaser.Display.Color.HexStringToColor(color).color;
+
+const tintColor = (color: string, offset: number): number => {
+  const source = Phaser.Display.Color.HexStringToColor(color);
+  const clamp = (value: number): number => Math.max(0, Math.min(255, value));
+  return Phaser.Display.Color.GetColor(
+    clamp(source.red + offset),
+    clamp(source.green + offset),
+    clamp(source.blue + offset),
+  );
+};
 
 export class ArenaScene extends Phaser.Scene {
   private static readonly BALL_TEXTURE_KEY = 'soccer-ball';
@@ -85,7 +96,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor('#08130c');
+    this.cameras.main.setBackgroundColor('#05070a');
     this.ensureBallTexture();
 
     this.fieldGraphics = this.add.graphics();
@@ -112,7 +123,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     const size = 96;
-    const radius = 34;
+    const radius = 36;
     const center = size / 2;
     const canvasTexture = this.textures.createCanvas(ArenaScene.BALL_TEXTURE_KEY, size, size);
     if (!canvasTexture) {
@@ -139,6 +150,11 @@ export class ArenaScene extends Phaser.Scene {
     context.arc(center, ballCenterY, radius, 0, Math.PI * 2);
     context.fill();
     context.stroke();
+
+    context.save();
+    context.beginPath();
+    context.arc(center, ballCenterY, radius - 1, 0, Math.PI * 2);
+    context.clip();
 
     const patches = [
       { x: 0, y: 2, r: 11.5, rot: -Math.PI / 2, color: '#2a2d34' },
@@ -212,6 +228,8 @@ export class ArenaScene extends Phaser.Scene {
     context.arc(center - 9, ballCenterY - 12, 12, 0, Math.PI * 2);
     context.fill();
 
+    context.restore();
+
     canvasTexture.refresh();
   }
 
@@ -244,8 +262,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
-    this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.625);
-    this.projectionScale = Math.min(this.scale.width / 1120, this.scale.height / 700);
+    this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.5);
+    this.projectionScale = Math.min(this.scale.width / 1080, this.scale.height / 620);
     this.objectScale = Math.max(0.72, this.projectionScale);
     this.flashOverlay.setSize(this.scale.width, this.scale.height);
     this.flashOverlay.setPosition(this.scale.width * 0.5, this.scale.height * 0.5);
@@ -255,61 +273,62 @@ export class ArenaScene extends Phaser.Scene {
   private drawField(): void {
     this.fieldGraphics.clear();
 
-    const shadowPoints = FIELD_POLYGON.map((point) => this.project({ x: point.x + 24, y: point.y + 24 }, -10));
-    this.fillPolygon(this.fieldGraphics, shadowPoints, 0x020703, 0.4);
+    const shadowPoints = FIELD_POLYGON.map((point) => this.project({ x: point.x + 26, y: point.y + 34 }, -18));
+    this.fillPolygon(this.fieldGraphics, shadowPoints, 0x010202, 0.4);
+
+    const auraPoints = FIELD_POLYGON.map((point) => this.project({ x: point.x * 1.04, y: point.y * 1.04 }, -4));
+    this.fillPolygon(this.fieldGraphics, auraPoints, 0x0a2f1d, 0.24);
 
     const fieldPoints = FIELD_POLYGON.map((point) => this.project(point, 0));
-    this.fillPolygon(this.fieldGraphics, fieldPoints, 0x1e6124, 1);
-    this.strokePolygon(this.fieldGraphics, fieldPoints, 0xdcedc8, 4);
+    this.fillPolygon(this.fieldGraphics, fieldPoints, 0x061a0f, 1);
+
+    const glowPoints = FIELD_POLYGON.map((point) => this.project({ x: point.x * 0.96, y: point.y * 0.96 }, 2));
+    this.fillPolygon(this.fieldGraphics, glowPoints, 0x0d2c1c, 0.72);
+
+    const innerFieldPoints = FIELD_POLYGON.map((point) => this.project({ x: point.x * 0.88, y: point.y * 0.88 }, 5));
+    this.fillPolygon(this.fieldGraphics, innerFieldPoints, 0x123824, 0.58);
+
+    this.strokePolygon(this.fieldGraphics, fieldPoints, 0xe2e8f0, 5, 0.18);
 
     const insetPoints = FIELD_POLYGON.map((point) =>
-      this.project({ x: point.x * 0.82, y: point.y * 0.82 }, 1),
+      this.project({ x: point.x * 0.9, y: point.y * 0.9 }, 4),
     );
-    this.strokePolygon(this.fieldGraphics, insetPoints, 0xbfe89d, 2);
+    this.strokePolygon(this.fieldGraphics, insetPoints, 0xf8fafc, 2, 0.16);
 
+    this.drawPitchBands();
+    this.drawFieldAxes();
     this.drawCenterMarkings();
     this.drawCornerGoals();
     this.drawGoals();
   }
 
   private drawCenterMarkings(): void {
-    const center = this.project({ x: 0, y: 0 }, 4);
-    this.fieldGraphics.lineStyle(2, 0xe8f5e9, 0.8);
-
-    const top = this.project({ x: 0, y: -ARENA_HALF_SIZE }, 0);
-    const bottom = this.project({ x: 0, y: ARENA_HALF_SIZE }, 0);
-    this.fieldGraphics.beginPath();
-    this.fieldGraphics.moveTo(top.x, top.y);
-    this.fieldGraphics.lineTo(bottom.x, bottom.y);
-    this.fieldGraphics.strokePath();
-
-    this.fieldGraphics.strokeEllipse(center.x, center.y, 180 * this.objectScale, 78 * this.objectScale);
-    this.fieldGraphics.fillStyle(0xe8f5e9, 0.9);
+    const center = this.project({ x: 0, y: 0 }, 6);
+    this.fieldGraphics.lineStyle(3, 0xf8fafc, 0.16);
+    this.fieldGraphics.strokeEllipse(center.x, center.y, 226 * this.objectScale, 96 * this.objectScale);
+    this.fieldGraphics.lineStyle(1.5, 0xffffff, 0.1);
+    this.fieldGraphics.strokeEllipse(center.x, center.y, 160 * this.objectScale, 68 * this.objectScale);
+    this.fieldGraphics.fillStyle(0xf8fafc, 0.82);
     this.fieldGraphics.fillCircle(center.x, center.y, 5 * this.objectScale);
   }
 
   private drawGoals(): void {
     Object.entries(GOAL_SEGMENTS).forEach(([side, segment]) => {
-      const from = this.project(segment.from, 12);
-      const to = this.project(segment.to, 12);
-      this.fieldGraphics.lineStyle(8, isGoalSideActive(side as RailSide, this.currentMatchSize) ? 0xf4fff4 : DISABLED_GOAL_COLOR, 0.9);
-      this.fieldGraphics.beginPath();
-      this.fieldGraphics.moveTo(from.x, from.y);
-      this.fieldGraphics.lineTo(to.x, to.y);
-      this.fieldGraphics.strokePath();
+      const active = isGoalSideActive(side as RailSide, this.currentMatchSize);
+      const color = active ? 0xf8fafc : DISABLED_GOAL_COLOR;
+      const from = this.project(segment.from, 16);
+      const to = this.project(segment.to, 16);
+      this.drawProjectedSegment(from, to, color, active ? 18 : 12, active ? 0.12 : 0.2);
+      this.drawProjectedSegment(from, to, color, active ? 8 : 6, active ? 0.96 : 0.74);
     });
   }
 
   private drawCornerGoals(): void {
-    this.fieldGraphics.lineStyle(8, CORNER_GOAL_COLOR, 0.88);
-
     CORNER_GOAL_SEGMENTS.forEach((segment) => {
-      const from = this.project(segment.from, 12);
-      const to = this.project(segment.to, 12);
-      this.fieldGraphics.beginPath();
-      this.fieldGraphics.moveTo(from.x, from.y);
-      this.fieldGraphics.lineTo(to.x, to.y);
-      this.fieldGraphics.strokePath();
+      const from = this.project(segment.from, 14);
+      const to = this.project(segment.to, 14);
+      this.drawProjectedSegment(from, to, CORNER_GOAL_COLOR, 10, 0.08);
+      this.drawProjectedSegment(from, to, CORNER_GOAL_COLOR, 4, 0.36);
     });
   }
 
@@ -425,14 +444,21 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private createPlayerVisual(definition: PlayerDefinition): PlayerVisual {
-    const container = this.add.container(0, 0).setDepth(100);
-    const shadow = this.add.ellipse(0, 0, 104, 34, 0x000000, 0.24);
-    const glow = this.add.ellipse(0, -18, 96, 64, toColorNumber(definition.glow), 0.12);
-    const base = this.add.circle(0, -18, 30, toColorNumber(definition.color), 1);
-    const pulseRing = this.add.circle(0, -18, 38, 0xffffff, 0).setStrokeStyle(0, toColorNumber(definition.color), 0);
-    const ring = this.add.circle(0, -18, 36, 0xffffff, 0.05).setStrokeStyle(3, 0xffffff, 0.3);
+    const darkGlow = tintColor(definition.color, -78);
+    const midGlow = tintColor(definition.color, -34);
+    const innerFill = tintColor(definition.color, 26);
+    const centerFill = tintColor(definition.color, 8);
 
-    container.add([shadow, glow, pulseRing, base, ring]);
+    const container = this.add.container(0, 0).setDepth(100);
+    const shadow = this.add.ellipse(0, 8, 110, 34, 0x000000, 0.3);
+    const glow = this.add.circle(0, -18, 42, midGlow, 0.3);
+    const base = this.add.circle(0, -18, 28, innerFill, 1);
+    const centerGlow = this.add.circle(0, -18, 18, innerFill, 0.16);
+    const core = this.add.circle(0, -18, 11, centerFill, 0.94);
+    const pulseRing = this.add.circle(0, -18, 38, 0xffffff, 0).setStrokeStyle(0, toColorNumber(definition.color), 0);
+    const ring = this.add.circle(0, -18, 35, 0xffffff, 0).setStrokeStyle(4, 0xffffff, 0.72);
+
+    container.add([shadow, glow, pulseRing, base, centerGlow, core, ring]);
     return { container, ring, pulseRing, shadow, pulse: 0 };
   }
 
@@ -450,6 +476,98 @@ export class ArenaScene extends Phaser.Scene {
     return new Phaser.Math.Vector2(this.viewportCenter.x + screenX, this.viewportCenter.y + screenY);
   }
 
+  private drawPitchBands(): void {
+    [-280, -180, -80, 80, 180, 280].forEach((y, index) => {
+      const span = this.getHorizontalSpan(y);
+      const from = this.project({ x: span.from, y }, 2);
+      const to = this.project({ x: span.to, y }, 2);
+      this.drawProjectedSegment(from, to, 0xf8fafc, index % 2 === 0 ? 2 : 1.5, index % 2 === 0 ? 0.075 : 0.05);
+    });
+
+    [-240, 240].forEach((x) => {
+      const span = this.getVerticalSpan(x);
+      const from = this.project({ x, y: span.from }, 2);
+      const to = this.project({ x, y: span.to }, 2);
+      this.drawProjectedSegment(from, to, 0xffffff, 1.5, 0.05);
+    });
+  }
+
+  private drawFieldAxes(): void {
+    const horizontal = this.getHorizontalSpan(0);
+    this.drawProjectedSegment(
+      this.project({ x: horizontal.from, y: 0 }, 6),
+      this.project({ x: horizontal.to, y: 0 }, 6),
+      0xffffff,
+      2,
+      0.1,
+    );
+
+    const vertical = this.getVerticalSpan(0);
+    this.drawProjectedSegment(
+      this.project({ x: 0, y: vertical.from }, 6),
+      this.project({ x: 0, y: vertical.to }, 6),
+      0xffffff,
+      2,
+      0.1,
+    );
+  }
+
+  private drawProjectedSegment(
+    from: Phaser.Math.Vector2,
+    to: Phaser.Math.Vector2,
+    color: number,
+    thickness: number,
+    alpha: number,
+  ): void {
+    this.fieldGraphics.lineStyle(thickness, color, alpha);
+    this.fieldGraphics.beginPath();
+    this.fieldGraphics.moveTo(from.x, from.y);
+    this.fieldGraphics.lineTo(to.x, to.y);
+    this.fieldGraphics.strokePath();
+  }
+
+  private getHorizontalSpan(y: number): { from: number; to: number } {
+    const straightBoundary = ARENA_HALF_SIZE - CHAMFER_SIZE;
+    const absY = Math.abs(y);
+
+    if (absY <= straightBoundary) {
+      return { from: -ARENA_HALF_SIZE, to: ARENA_HALF_SIZE };
+    }
+
+    if (y < 0) {
+      return {
+        from: -2 * ARENA_HALF_SIZE + CHAMFER_SIZE - y,
+        to: 2 * ARENA_HALF_SIZE - CHAMFER_SIZE + y,
+      };
+    }
+
+    return {
+      from: y - 2 * ARENA_HALF_SIZE + CHAMFER_SIZE,
+      to: 2 * ARENA_HALF_SIZE - CHAMFER_SIZE - y,
+    };
+  }
+
+  private getVerticalSpan(x: number): { from: number; to: number } {
+    const straightBoundary = ARENA_HALF_SIZE - CHAMFER_SIZE;
+    const absX = Math.abs(x);
+
+    if (absX <= straightBoundary) {
+      return { from: -ARENA_HALF_SIZE, to: ARENA_HALF_SIZE };
+    }
+
+    if (x < 0) {
+      return {
+        from: -x - 2 * ARENA_HALF_SIZE + CHAMFER_SIZE,
+        to: x + 2 * ARENA_HALF_SIZE - CHAMFER_SIZE,
+      };
+    }
+
+    return {
+      from: x - 2 * ARENA_HALF_SIZE + CHAMFER_SIZE,
+      to: -x + 2 * ARENA_HALF_SIZE - CHAMFER_SIZE,
+    };
+  }
+
   private fillPolygon(graphics: Phaser.GameObjects.Graphics, points: Phaser.Math.Vector2[], fillColor: number, alpha: number): void {
     graphics.fillStyle(fillColor, alpha);
     graphics.beginPath();
@@ -461,8 +579,14 @@ export class ArenaScene extends Phaser.Scene {
     graphics.fillPath();
   }
 
-  private strokePolygon(graphics: Phaser.GameObjects.Graphics, points: Phaser.Math.Vector2[], strokeColor: number, thickness: number): void {
-    graphics.lineStyle(thickness, strokeColor, 0.85);
+  private strokePolygon(
+    graphics: Phaser.GameObjects.Graphics,
+    points: Phaser.Math.Vector2[],
+    strokeColor: number,
+    thickness: number,
+    alpha = 0.85,
+  ): void {
+    graphics.lineStyle(thickness, strokeColor, alpha);
     graphics.beginPath();
     graphics.moveTo(points[0].x, points[0].y);
     points.slice(1).forEach((point) => {
