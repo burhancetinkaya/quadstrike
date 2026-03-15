@@ -312,12 +312,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private drawGoals(): void {
     Object.entries(GOAL_SEGMENTS).forEach(([side, segment]) => {
-      const active = isGoalSideActive(side as RailSide, this.currentMatchSize);
-      const color = active ? 0xf8fafc : DISABLED_GOAL_COLOR;
-      const from = this.project(segment.from, 16);
-      const to = this.project(segment.to, 16);
-      this.drawProjectedSegment(from, to, color, active ? 18 : 12, active ? 0.12 : 0.2);
-      this.drawProjectedSegment(from, to, color, active ? 8 : 6, active ? 0.96 : 0.74);
+      this.drawGoalFrame(side as RailSide, segment.from, segment.to, isGoalSideActive(side as RailSide, this.currentMatchSize));
     });
   }
 
@@ -498,6 +493,49 @@ export class ArenaScene extends Phaser.Scene {
 
   }
 
+  private drawGoalFrame(side: RailSide, fromWorld: Vec2, toWorld: Vec2, active: boolean): void {
+    const frameColor = active ? 0xf8fafc : DISABLED_GOAL_COLOR;
+    const netColor = active ? 0xf8fafc : 0xb8c2bc;
+    const goalDepth = 62;
+    const goalHeight = 76;
+    const depthOffset = this.getGoalDepthOffset(side, goalDepth);
+
+    const backFromWorld = { x: fromWorld.x + depthOffset.x, y: fromWorld.y + depthOffset.y };
+    const backToWorld = { x: toWorld.x + depthOffset.x, y: toWorld.y + depthOffset.y };
+
+    const frontBaseFrom = this.project(fromWorld, 18);
+    const frontBaseTo = this.project(toWorld, 18);
+    const backBaseFrom = this.project(backFromWorld, 14);
+    const backBaseTo = this.project(backToWorld, 14);
+    const frontTopFrom = this.project(fromWorld, 18 + goalHeight);
+    const frontTopTo = this.project(toWorld, 18 + goalHeight);
+    const backTopFrom = this.project(backFromWorld, 14 + goalHeight * 0.86);
+    const backTopTo = this.project(backToWorld, 14 + goalHeight * 0.86);
+
+    this.fillPolygon(this.fieldGraphics, [frontBaseFrom, frontBaseTo, backBaseTo, backBaseFrom], 0x091017, active ? 0.22 : 0.12);
+    this.fillPolygon(this.fieldGraphics, [frontTopFrom, frontTopTo, backTopTo, backTopFrom], 0x0a1219, active ? 0.08 : 0.04);
+    this.fillPolygon(this.fieldGraphics, [frontBaseFrom, backBaseFrom, backTopFrom, frontTopFrom], 0x091017, active ? 0.12 : 0.06);
+    this.fillPolygon(this.fieldGraphics, [frontBaseTo, backBaseTo, backTopTo, frontTopTo], 0x091017, active ? 0.12 : 0.06);
+
+    this.drawNetPanel(backBaseFrom, backBaseTo, backTopTo, backTopFrom, netColor, active ? 0.38 : 0.18, 7, 11);
+    this.drawNetPanel(frontTopFrom, frontTopTo, backTopTo, backTopFrom, netColor, active ? 0.22 : 0.1, 4, 10);
+    this.drawNetPanel(frontBaseFrom, backBaseFrom, backTopFrom, frontTopFrom, netColor, active ? 0.2 : 0.08, 5, 4);
+    this.drawNetPanel(frontBaseTo, backBaseTo, backTopTo, frontTopTo, netColor, active ? 0.2 : 0.08, 5, 4);
+
+    this.drawProjectedSegment(frontBaseFrom, frontBaseTo, frameColor, active ? 18 : 12, active ? 0.16 : 0.18);
+    this.drawProjectedSegment(frontBaseFrom, frontBaseTo, frameColor, active ? 8 : 6, active ? 0.98 : 0.72);
+    this.drawProjectedSegment(frontBaseFrom, frontTopFrom, frameColor, active ? 10 : 7, active ? 0.92 : 0.54);
+    this.drawProjectedSegment(frontBaseTo, frontTopTo, frameColor, active ? 10 : 7, active ? 0.92 : 0.54);
+    this.drawProjectedSegment(frontTopFrom, frontTopTo, frameColor, active ? 10 : 7, active ? 0.92 : 0.54);
+    this.drawProjectedSegment(frontTopFrom, backTopFrom, frameColor, active ? 7 : 5, active ? 0.34 : 0.18);
+    this.drawProjectedSegment(frontTopTo, backTopTo, frameColor, active ? 7 : 5, active ? 0.34 : 0.18);
+    this.drawProjectedSegment(frontBaseFrom, backBaseFrom, frameColor, active ? 6 : 4, active ? 0.2 : 0.12);
+    this.drawProjectedSegment(frontBaseTo, backBaseTo, frameColor, active ? 6 : 4, active ? 0.2 : 0.12);
+    this.drawProjectedSegment(backBaseFrom, backTopFrom, frameColor, active ? 5 : 3, active ? 0.26 : 0.14);
+    this.drawProjectedSegment(backBaseTo, backTopTo, frameColor, active ? 5 : 3, active ? 0.26 : 0.14);
+    this.drawProjectedSegment(backTopFrom, backTopTo, frameColor, active ? 5 : 3, active ? 0.34 : 0.16);
+  }
+
   private drawFieldAxes(): void {
     const horizontal = this.getHorizontalSpan(0);
     this.drawProjectedSegment(
@@ -521,6 +559,59 @@ export class ArenaScene extends Phaser.Scene {
     this.fieldGraphics.moveTo(from.x, from.y);
     this.fieldGraphics.lineTo(to.x, to.y);
     this.fieldGraphics.strokePath();
+  }
+
+  private interpolatePoint(from: Phaser.Math.Vector2, to: Phaser.Math.Vector2, progress: number): Phaser.Math.Vector2 {
+    return new Phaser.Math.Vector2(
+      Phaser.Math.Linear(from.x, to.x, progress),
+      Phaser.Math.Linear(from.y, to.y, progress),
+    );
+  }
+
+  private drawNetPanel(
+    bottomStart: Phaser.Math.Vector2,
+    bottomEnd: Phaser.Math.Vector2,
+    topEnd: Phaser.Math.Vector2,
+    topStart: Phaser.Math.Vector2,
+    color: number,
+    alpha: number,
+    horizontalDivisions: number,
+    verticalDivisions: number,
+  ): void {
+    for (let index = 1; index < horizontalDivisions; index += 1) {
+      const progress = index / horizontalDivisions;
+      this.drawProjectedSegment(
+        this.interpolatePoint(bottomStart, topStart, progress),
+        this.interpolatePoint(bottomEnd, topEnd, progress),
+        color,
+        1,
+        alpha,
+      );
+    }
+
+    for (let index = 1; index < verticalDivisions; index += 1) {
+      const progress = index / verticalDivisions;
+      this.drawProjectedSegment(
+        this.interpolatePoint(bottomStart, bottomEnd, progress),
+        this.interpolatePoint(topStart, topEnd, progress),
+        color,
+        0.9,
+        alpha * 0.9,
+      );
+    }
+  }
+
+  private getGoalDepthOffset(side: RailSide, depth: number): Vec2 {
+    switch (side) {
+      case 'north':
+        return { x: 0, y: -depth };
+      case 'south':
+        return { x: 0, y: depth };
+      case 'east':
+        return { x: depth, y: 0 };
+      case 'west':
+        return { x: -depth, y: 0 };
+    }
   }
 
   private getHorizontalSpan(y: number): { from: number; to: number } {
