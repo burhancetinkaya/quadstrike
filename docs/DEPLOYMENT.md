@@ -47,7 +47,7 @@ If you do not want to use Blueprints, create the two services manually:
 
 - Service type: Web Service
 - Runtime: Node
-- Build command: `npm ci`
+- Build command: `npm install --include=optional`
 - Start command: `npm run serve:signal`
 - Plan: `Free`
 - Health check path: `/health`
@@ -55,10 +55,24 @@ If you do not want to use Blueprints, create the two services manually:
 ### 2. Frontend
 
 - Service type: Static Site
-- Build command: `npm ci && npm run build`
+- Build command: `npm install --include=optional && npm run build`
 - Publish directory: `dist`
 - Environment variable:
   - `VITE_SIGNALING_URL=wss://YOUR-SIGNAL-SERVICE.onrender.com`
+
+## Render Build Fix
+
+If Render fails with a Rollup native module error similar to:
+
+- `Cannot find module @rollup/rollup-linux-x64-gnu`
+
+use `npm install --include=optional` instead of `npm ci`.
+
+Reason:
+
+- Rollup publishes platform-specific native packages as optional dependencies
+- some npm/lockfile combinations on Linux CI environments skip the matching native package during `npm ci`
+- this repository already includes the Linux Rollup package in `optionalDependencies` to make Render installs more reliable
 
 ## Other Free Options
 

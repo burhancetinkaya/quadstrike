@@ -3,7 +3,7 @@ services:
     name: quadstrike-signal
     runtime: node
     plan: free
-    buildCommand: npm ci
+    buildCommand: npm install --include=optional
     startCommand: npm run serve:signal
     healthCheckPath: /health
     autoDeployTrigger: commit
@@ -11,6 +11,6 @@ services:
   - type: web
     name: quadstrike-web
     runtime: static
-    buildCommand: npm ci && npm run build
+    buildCommand: npm install --include=optional && npm run build
     staticPublishPath: dist
     autoDeployTrigger: commit
