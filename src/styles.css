@@ -203,13 +203,14 @@ select {
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 4px;
+  gap: 8px;
   overflow: hidden;
 }
 
 .match-header-wrap {
   display: flex;
   justify-content: center;
+  margin-bottom: 2px;
 }
 
 .match-header {
@@ -217,9 +218,9 @@ select {
   grid-template-columns: auto auto auto;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 8px 12px;
-  border-radius: 22px;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 18px;
   background: linear-gradient(180deg, rgba(12, 18, 34, 0.96), rgba(7, 11, 20, 0.96));
   border: 1px solid rgba(86, 104, 136, 0.24);
   box-shadow:
@@ -230,7 +231,7 @@ select {
 .scoreboard-side {
   display: grid;
   grid-template-columns: repeat(2, auto);
-  gap: 8px;
+  gap: 6px;
 }
 
 .scoreboard-side-right .score-card {
@@ -243,11 +244,11 @@ select {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  width: clamp(140px, 9vw, 190px);
-  gap: 10px;
-  min-height: 62px;
-  padding: 8px 12px;
-  border-radius: 18px;
+  width: clamp(124px, 8.2vw, 168px);
+  gap: 8px;
+  min-height: 54px;
+  padding: 6px 10px;
+  border-radius: 15px;
   overflow: hidden;
   background:
     radial-gradient(circle at 82% 50%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 42%),
@@ -261,13 +262,13 @@ select {
 .score-card::before {
   content: "";
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 7px;
+  bottom: 7px;
   left: 0;
-  width: 6px;
+  width: 5px;
   border-radius: 0 999px 999px 0;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 94%, white), color-mix(in srgb, var(--accent) 78%, black));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 48%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 42%, transparent);
   pointer-events: none;
 }
 
@@ -307,13 +308,13 @@ select {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 0 22px color-mix(in srgb, var(--accent) 24%, transparent);
+    0 0 18px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .score-chip {
   position: relative;
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -323,23 +324,23 @@ select {
     radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--accent) 82%, white), color-mix(in srgb, var(--accent) 62%, transparent) 34%, transparent 36%),
     color-mix(in srgb, var(--accent) 22%, #101828);
   box-shadow:
-    inset 0 0 20px color-mix(in srgb, var(--accent) 24%, transparent),
-    0 0 28px color-mix(in srgb, var(--accent) 22%, transparent);
+    inset 0 0 16px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 22px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .score-chip-dot {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   border-radius: 999px;
   background: var(--accent);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 68%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
 .score-copy {
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   order: 1;
   align-content: center;
 }
@@ -355,15 +356,15 @@ select {
 .score-card .label {
   color: color-mix(in srgb, var(--accent) 72%, #cbd5e1);
   text-transform: uppercase;
-  font-size: 0.62rem;
+  font-size: 0.56rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.11em;
 }
 
 .score-card .value {
   color: var(--title);
   font-family: var(--font-display);
-  font-size: clamp(1.35rem, 1.9vw, 1.95rem);
+  font-size: clamp(1.16rem, 1.65vw, 1.68rem);
   font-weight: 700;
   line-height: 1;
   text-shadow: 0 0 12px rgba(255, 255, 255, 0.12);
@@ -388,29 +389,29 @@ select {
 .match-clock-panel {
   display: grid;
   justify-items: center;
-  gap: 4px;
-  min-width: 190px;
-  padding: 4px 10px;
+  gap: 3px;
+  min-width: 164px;
+  padding: 2px 8px;
 }
 
 .match-clock-label {
   color: var(--muted);
   text-transform: uppercase;
-  font-size: 0.68rem;
+  font-size: 0.58rem;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   opacity: 0.8;
 }
 
 .match-clock {
-  min-width: 170px;
+  min-width: 144px;
   padding: 0;
   border-radius: 0;
   background: transparent;
   border: 0;
   color: var(--title);
   font-family: var(--font-display);
-  font-size: clamp(2rem, 2.5vw, 2.8rem);
+  font-size: clamp(1.72rem, 2.1vw, 2.28rem);
   letter-spacing: 0.08em;
   text-align: center;
   text-shadow: 0 0 24px rgba(255, 255, 255, 0.18);

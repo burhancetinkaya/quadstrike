@@ -262,8 +262,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
-    this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.5);
-    this.projectionScale = Math.min(this.scale.width / 1080, this.scale.height / 620);
+    this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.56);
+    this.projectionScale = Math.min(this.scale.width / 1080, this.scale.height / 680);
     this.objectScale = Math.max(0.72, this.projectionScale);
     this.flashOverlay.setSize(this.scale.width, this.scale.height);
     this.flashOverlay.setPosition(this.scale.width * 0.5, this.scale.height * 0.5);
@@ -496,8 +496,8 @@ export class ArenaScene extends Phaser.Scene {
   private drawGoalFrame(side: RailSide, fromWorld: Vec2, toWorld: Vec2, active: boolean): void {
     const frameColor = active ? 0xf8fafc : DISABLED_GOAL_COLOR;
     const netColor = active ? 0xf8fafc : 0xb8c2bc;
-    const goalDepth = 62;
-    const goalHeight = 76;
+    const goalDepth = 54;
+    const goalHeight = 64;
     const depthOffset = this.getGoalDepthOffset(side, goalDepth);
 
     const backFromWorld = { x: fromWorld.x + depthOffset.x, y: fromWorld.y + depthOffset.y };
