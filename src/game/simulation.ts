@@ -388,28 +388,28 @@ export class MatchSimulation {
     return [
       {
         side: 'north',
-        body: Bodies.rectangle(0, -ARENA_HALF_SIZE, GOAL_SCORE_HALF_WIDTH * 2, WALL_THICKNESS, {
+        body: Bodies.rectangle(0, -ARENA_HALF_SIZE, GOAL_HALF_WIDTH * 2, WALL_THICKNESS, {
           isStatic: true,
           label: 'goal-blocker:north',
         }),
       },
       {
         side: 'east',
-        body: Bodies.rectangle(ARENA_HALF_SIZE, 0, WALL_THICKNESS, GOAL_SCORE_HALF_WIDTH * 2, {
+        body: Bodies.rectangle(ARENA_HALF_SIZE, 0, WALL_THICKNESS, GOAL_HALF_WIDTH * 2, {
           isStatic: true,
           label: 'goal-blocker:east',
         }),
       },
       {
         side: 'south',
-        body: Bodies.rectangle(0, ARENA_HALF_SIZE, GOAL_SCORE_HALF_WIDTH * 2, WALL_THICKNESS, {
+        body: Bodies.rectangle(0, ARENA_HALF_SIZE, GOAL_HALF_WIDTH * 2, WALL_THICKNESS, {
           isStatic: true,
           label: 'goal-blocker:south',
         }),
       },
       {
         side: 'west',
-        body: Bodies.rectangle(-ARENA_HALF_SIZE, 0, WALL_THICKNESS, GOAL_SCORE_HALF_WIDTH * 2, {
+        body: Bodies.rectangle(-ARENA_HALF_SIZE, 0, WALL_THICKNESS, GOAL_HALF_WIDTH * 2, {
           isStatic: true,
           label: 'goal-blocker:west',
         }),

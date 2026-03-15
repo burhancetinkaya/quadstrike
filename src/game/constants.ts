@@ -8,15 +8,17 @@ export const GOAL_FREEZE_MS = 900;
 export const MATCH_DURATION_MS = 2 * 60 * 1000;
 
 export const ARENA_HALF_SIZE = 420;
-export const CHAMFER_SIZE = 120;
+export const CHAMFER_SIZE = 158;
 export const STRAIGHT_SIDE_HALF_SPAN = ARENA_HALF_SIZE - CHAMFER_SIZE;
-export const GOAL_HALF_WIDTH = STRAIGHT_SIDE_HALF_SPAN;
+const GOAL_SIDE_WALL_MARGIN = 18;
+const GOAL_SENSOR_PADDING = 8;
+export const GOAL_HALF_WIDTH = STRAIGHT_SIDE_HALF_SPAN - GOAL_SIDE_WALL_MARGIN;
 export const WALL_THICKNESS = 36;
 export const PLAYER_RADIUS = 34;
 export const PLAYER_SPEED = 1040;
 export const BALL_RADIUS = 22;
-export const GOAL_SCORE_HALF_WIDTH = STRAIGHT_SIDE_HALF_SPAN;
-export const GOAL_TRIGGER_HALF_WIDTH = STRAIGHT_SIDE_HALF_SPAN - BALL_RADIUS;
+export const GOAL_SCORE_HALF_WIDTH = Math.min(STRAIGHT_SIDE_HALF_SPAN, GOAL_HALF_WIDTH + GOAL_SENSOR_PADDING);
+export const GOAL_TRIGGER_HALF_WIDTH = GOAL_SCORE_HALF_WIDTH - BALL_RADIUS * 0.6;
 export const BOOST_DISTANCE = 138;
 export const BOOST_FORCE = 0.043;
 export const BOOST_CONTACT_EPSILON = 6;
@@ -102,24 +104,24 @@ export const FIELD_POLYGON: Vec2[] = [
 
 export const GOAL_SEGMENTS = {
   north: {
-    from: { x: -GOAL_SCORE_HALF_WIDTH, y: -ARENA_HALF_SIZE },
-    to: { x: GOAL_SCORE_HALF_WIDTH, y: -ARENA_HALF_SIZE },
+    from: { x: -GOAL_HALF_WIDTH, y: -ARENA_HALF_SIZE },
+    to: { x: GOAL_HALF_WIDTH, y: -ARENA_HALF_SIZE },
   },
   east: {
-    from: { x: ARENA_HALF_SIZE, y: -GOAL_SCORE_HALF_WIDTH },
-    to: { x: ARENA_HALF_SIZE, y: GOAL_SCORE_HALF_WIDTH },
+    from: { x: ARENA_HALF_SIZE, y: -GOAL_HALF_WIDTH },
+    to: { x: ARENA_HALF_SIZE, y: GOAL_HALF_WIDTH },
   },
   south: {
-    from: { x: -GOAL_SCORE_HALF_WIDTH, y: ARENA_HALF_SIZE },
-    to: { x: GOAL_SCORE_HALF_WIDTH, y: ARENA_HALF_SIZE },
+    from: { x: -GOAL_HALF_WIDTH, y: ARENA_HALF_SIZE },
+    to: { x: GOAL_HALF_WIDTH, y: ARENA_HALF_SIZE },
   },
   west: {
-    from: { x: -ARENA_HALF_SIZE, y: -GOAL_SCORE_HALF_WIDTH },
-    to: { x: -ARENA_HALF_SIZE, y: GOAL_SCORE_HALF_WIDTH },
+    from: { x: -ARENA_HALF_SIZE, y: -GOAL_HALF_WIDTH },
+    to: { x: -ARENA_HALF_SIZE, y: GOAL_HALF_WIDTH },
   },
 } as const;
 
-const CORNER_GOAL_INSET = CHAMFER_SIZE * 0.18;
+const CORNER_GOAL_INSET = CHAMFER_SIZE * 0.16;
 
 export const CORNER_GOAL_SEGMENTS = [
   {
