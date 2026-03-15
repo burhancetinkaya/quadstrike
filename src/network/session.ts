@@ -43,6 +43,7 @@ const createPeerId = (): string => {
   return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
 };
 
+// Bridges signaling and peer links into a higher-level multiplayer session API.
 export class MatchNetwork {
   private readonly signaling = new SignalingClient();
 
@@ -106,6 +107,7 @@ export class MatchNetwork {
       return;
     }
 
+    // Only the host emits authoritative state. Everyone else just forwards input.
     this.outgoingStateSequence += 1;
     const payload = serializeStatePacket({
       ...snapshot,
@@ -123,6 +125,7 @@ export class MatchNetwork {
       return;
     }
 
+    // Clients always target the current host's open data channel.
     const hostLink = this.peers.find((peer) => peer.peerId !== this.sessionInfo.peerId && this.links.get(peer.peerId)?.isOpen());
     if (!hostLink) {
       return;
@@ -154,6 +157,8 @@ export class MatchNetwork {
   }
 
   private async joinRoom(url: string, roomId: string, requestedMode: SessionMode, matchSize?: MatchSize): Promise<SessionInfo> {
+    // Joining establishes room metadata first; actual peer connections are
+    // negotiated lazily as `peer-joined` messages arrive.
     this.stats = createStats();
     const peerId = createPeerId();
     const joined = await this.signaling.connect(url, roomId, peerId, requestedMode, matchSize);
@@ -190,6 +195,8 @@ export class MatchNetwork {
   }
 
   private resetConnections(): void {
+    // Reset is reused by close/rejoin flows so stale stats, links, and clock
+    // offsets cannot leak into a new room.
     this.signaling.leave();
     this.links.forEach((link) => link.close());
     this.links.clear();
@@ -208,6 +215,7 @@ export class MatchNetwork {
     }
 
     if (message.type === 'peer-left') {
+      // Room roster changes invalidate countdown unless the match is already live.
       this.peers = message.peers;
       this.sessionInfo.matchSize = message.matchSize;
       this.sessionInfo.connectedPlayerIds = [...new Set(this.peers.map((peer) => peer.playerId))].sort((left, right) => left - right);
@@ -233,6 +241,7 @@ export class MatchNetwork {
       this.callbacks.onSession(this.sessionInfo, this.peers);
 
       if (this.sessionInfo.isHost && message.peerId !== this.sessionInfo.peerId) {
+        // The host proactively starts negotiation with each new peer.
         const link = this.ensureLink(message.peerId, true);
         await link.startNegotiation();
         this.callbacks.onStatus(`${message.peerId.slice(0, 8)} connected to room ${message.roomId}.`);
@@ -241,6 +250,8 @@ export class MatchNetwork {
     }
 
     if (message.type === 'host-migrated') {
+      // Host migration drops old links first because all peers need a clean
+      // negotiation round toward the new authority.
       this.peers = message.peers;
       this.closePeerLinks();
       this.sessionInfo = {
@@ -304,6 +315,7 @@ export class MatchNetwork {
         }
       },
       onStatePacket: (snapshot, receivedAt) => {
+        // Packet-loss estimation is derived from snapshot sequence gaps.
         this.receivedStatePackets += 1;
         if (this.lastStateSequence && snapshot.sequence > this.lastStateSequence + 1) {
           this.droppedStatePackets += snapshot.sequence - this.lastStateSequence - 1;
@@ -319,6 +331,7 @@ export class MatchNetwork {
         this.callbacks.onSnapshot(snapshot, receivedAt);
       },
       onRoundTripTime: (roundTripMs) => {
+        // Ping is aggregated across currently open peer links only.
         if (typeof roundTripMs === 'number' && Number.isFinite(roundTripMs)) {
           this.peerRoundTripMs.set(remotePeerId, roundTripMs);
           this.recomputePingStat();
@@ -348,6 +361,7 @@ export class MatchNetwork {
   }
 
   private updateConnectedPeers(): void {
+    // Hosts care about every live peer; clients only care whether the host link exists.
     const openConnections = [...this.links.values()].filter((link) => link.isOpen()).length;
     this.stats.connectedPeers = this.sessionInfo.isHost ? openConnections : Number(openConnections > 0);
     if (openConnections === 0) {

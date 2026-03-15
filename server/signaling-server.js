@@ -8,6 +8,8 @@ const OPEN = 1;
 const rooms = new Map();
 
 const getRoom = (roomId) => {
+  // `getRoom` is intentionally lazy so reconnecting clients can revive a room
+  // record without every call site reimplementing the same setup.
   let room = rooms.get(roomId);
   if (!room) {
     room = {
@@ -39,6 +41,8 @@ const sendJson = (socket, payload) => {
 };
 
 const broadcast = (room, payload, excludePeerId = null) => {
+  // Room events are fan-out only; authoritative gameplay stays on the host's
+  // direct data channels once peers discover each other.
   room.peers.forEach((socket, peerId) => {
     if (peerId !== excludePeerId) {
       sendJson(socket, payload);
@@ -49,6 +53,7 @@ const broadcast = (room, payload, excludePeerId = null) => {
 const getAllowedPlayerIds = (room) => (room.matchSize === 2 ? [0, 2] : [0, 1, 2, 3]);
 
 const getLowestFreePlayerId = (room) => {
+  // Slots are deterministic so reconnects keep stable identities whenever possible.
   for (const playerId of getAllowedPlayerIds(room)) {
     if (![...room.playerAssignments.values()].includes(playerId)) {
       return playerId;
@@ -58,6 +63,7 @@ const getLowestFreePlayerId = (room) => {
 };
 
 const electHost = (room) => {
+  // Lowest player id becomes host to keep migration deterministic for all clients.
   const sorted = [...room.playerAssignments.entries()].sort((a, b) => a[1] - b[1]);
   room.hostPeerId = sorted[0]?.[0] ?? null;
   return room.hostPeerId;
@@ -77,6 +83,8 @@ wss.on('connection', (socket) => {
     }
 
     if (message.type === 'join' || message.type === 'host') {
+      // The initial signaling message both creates/joins the room and assigns a
+      // stable player slot before any WebRTC negotiation begins.
       roomId = String(message.roomId ?? '').trim().toUpperCase();
       peerId = String(message.peerId ?? '').trim();
       const requestedMode = message.type === 'host' || message.requestedMode === 'host' ? 'host' : 'client';
@@ -158,6 +166,8 @@ wss.on('connection', (socket) => {
     const room = getRoom(roomId);
 
     if (message.type === 'signal') {
+      // SDP offers/answers and ICE candidates are only relayed; the server never
+      // inspects or mutates their payload.
       const targetPeerId = String(message.targetPeerId ?? '');
       const targetSocket = room.peers.get(targetPeerId);
       if (!targetSocket) {
@@ -176,6 +186,8 @@ wss.on('connection', (socket) => {
     }
 
     if (message.type === 'match-countdown') {
+      // Countdown timing comes from the host so every client can start play off
+      // a single shared timestamp.
       if (peerId !== room.hostPeerId) {
         sendJson(socket, { type: 'error', message: 'Only the host can start the match countdown.' });
         return;
@@ -216,6 +228,7 @@ wss.on('connection', (socket) => {
 
     const hostChanged = room.hostPeerId === peerId;
     if (hostChanged) {
+      // Host migration is server-driven so clients can re-negotiate cleanly.
       electHost(room);
     }
 

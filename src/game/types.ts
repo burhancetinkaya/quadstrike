@@ -1,3 +1,4 @@
+// Shared domain types used by simulation, rendering, and networking.
 export type PlayerId = 0 | 1 | 2 | 3;
 export type MatchSize = 2 | 4;
 export type RailSide = 'north' | 'east' | 'south' | 'west';
@@ -48,6 +49,8 @@ export interface ScoreState {
 }
 
 export interface GameSnapshot {
+  // `tick` and `hostTime` together let clients rebuild the host timeline for
+  // interpolation and clock drift measurements.
   tick: number;
   phase: MatchPhase;
   hostTime: number;

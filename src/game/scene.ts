@@ -55,6 +55,8 @@ const tintColor = (color: string, offset: number): number => {
   );
 };
 
+// Responsible only for presentation. It pulls snapshots from the runtime and
+// turns them into the pseudo-isometric arena, players, ball, and debug overlays.
 export class ArenaScene extends Phaser.Scene {
   private static readonly BALL_TEXTURE_KEY = 'soccer-ball';
 
@@ -122,6 +124,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private ensureBallTexture(): void {
+    // The soccer ball is drawn once into a canvas texture so Phaser can reuse it
+    // as a normal sprite without loading an external asset.
     if (this.textures.exists(ArenaScene.BALL_TEXTURE_KEY)) {
       return;
     }
@@ -238,6 +242,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // Runtime ticks first; rendering then consumes the latest snapshot for this frame.
     this.runtime.update(delta);
     const snapshot = this.runtime.getRenderSnapshot();
     const session = this.runtime.getSessionInfo();
@@ -266,6 +271,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
+    // Resize recomputes the fake-isometric projection and slightly shrinks actors
+    // on compact/mobile viewports to preserve playable space.
     this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.56);
     this.projectionScale = Math.min(this.scale.width / 1080, this.scale.height / 680);
     this.objectScale = Math.max(0.72, this.projectionScale);
@@ -278,6 +285,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawField(): void {
+    // The field is redrawn from projected world geometry whenever scale or match
+    // size changes so active goals and proportions stay correct.
     this.fieldGraphics.clear();
 
     const shadowPoints = FIELD_POLYGON.map((point) => this.project({ x: point.x + 26, y: point.y + 34 }, -18));
@@ -333,6 +342,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private renderSnapshot(snapshot: GameSnapshot): void {
+    // Snapshot rendering is split into player/ball paths so pulse and depth
+    // effects can react to gameplay metadata like `lastTouchedBy`.
     if (snapshot.lastTouchedBy !== null && snapshot.lastTouchedBy !== this.previousLastTouchedBy) {
       const visual = this.playerVisuals.get(snapshot.lastTouchedBy);
       if (visual) {
@@ -369,6 +380,8 @@ export class ArenaScene extends Phaser.Scene {
     }
     visual.container.setVisible(true);
 
+    // Rail coordinates are projected into screen space with an added lift so the
+    // discs read as hovering actors instead of flat circles.
     const world = projectRailPosition(definition, player.railPosition);
     const projected = this.project(world, 22);
     visual.container.setPosition(projected.x, projected.y);
@@ -389,6 +402,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private updateGoalFlash(snapshot: GameSnapshot, delta: number): void {
+    // A full-screen additive flash sells goals without modifying the scene camera.
     const totalScore = snapshot.score.white + snapshot.score.blue + snapshot.score.orange + snapshot.score.green;
     if (totalScore !== this.lastScoreTotal) {
       this.lastScoreTotal = totalScore;
@@ -402,6 +416,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawDebug(snapshot: GameSnapshot): void {
+    // Debug overlays intentionally use separate graphics objects so they can be
+    // toggled without disturbing the main field draw calls.
     this.debugGraphics.clear();
     this.boundsGraphics.clear();
 
@@ -444,6 +460,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private createPlayerVisual(definition: PlayerDefinition): PlayerVisual {
+    // Players are layered circles/ellipses instead of textures so their palette
+    // can be generated directly from the configured player color.
     const darkGlow = tintColor(definition.color, -78);
     const midGlow = tintColor(definition.color, -34);
     const innerFill = tintColor(definition.color, 26);
@@ -471,12 +489,14 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private project(point: Vec2, lift: number): Phaser.Math.Vector2 {
+    // The projection is a simple handcrafted transform, not a real 3D camera.
     const screenX = (point.x - point.y) * 0.74 * this.projectionScale;
     const screenY = (point.x + point.y) * 0.34 * this.projectionScale - lift * this.projectionScale;
     return new Phaser.Math.Vector2(this.viewportCenter.x + screenX, this.viewportCenter.y + screenY);
   }
 
   private drawPitchBands(): void {
+    // Alternating bands and guide lines give the octagon a stronger sense of depth.
     const bandEdges = [-ARENA_HALF_SIZE, -280, -180, -80, 80, 180, 280, ARENA_HALF_SIZE];
     bandEdges.slice(0, -1).forEach((fromY, index) => {
       const toY = bandEdges[index + 1];
@@ -501,6 +521,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawGoalFrame(side: RailSide, fromWorld: Vec2, toWorld: Vec2, active: boolean): void {
+    // Goals are rendered as lightweight wireframe volumes so inactive rails can
+    // be visually dimmed without changing scene structure.
     const frameColor = active ? 0xf8fafc : DISABLED_GOAL_COLOR;
     const netColor = active ? 0xf8fafc : 0xb8c2bc;
     const goalDepth = 54;
@@ -585,6 +607,7 @@ export class ArenaScene extends Phaser.Scene {
     horizontalDivisions: number,
     verticalDivisions: number,
   ): void {
+    // Netting is faked by interpolating between the quad corners and drawing a grid.
     for (let index = 1; index < horizontalDivisions; index += 1) {
       const progress = index / horizontalDivisions;
       this.drawProjectedSegment(
@@ -622,6 +645,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private getActorScaleMultipliers(): { player: number; ball: number } {
+    // Coarse pointers are a decent proxy for phones/tablets, where slightly
+    // smaller actors preserve room for touch controls and HUD.
     const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
     const compactViewport = this.scale.width <= 960 || this.scale.height <= 560;
     const veryCompactViewport = this.scale.width <= 720 || this.scale.height <= 430;
@@ -647,6 +672,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private getHorizontalSpan(y: number): { from: number; to: number } {
+    // Returns the playable horizontal extent at a given Y inside the octagon.
     const straightBoundary = ARENA_HALF_SIZE - CHAMFER_SIZE;
     const absY = Math.abs(y);
 
@@ -668,6 +694,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private getVerticalSpan(x: number): { from: number; to: number } {
+    // Mirrors `getHorizontalSpan` for the vertical axis when drawing guides.
     const straightBoundary = ARENA_HALF_SIZE - CHAMFER_SIZE;
     const absX = Math.abs(x);
 

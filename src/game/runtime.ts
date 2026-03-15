@@ -29,6 +29,8 @@ export interface RuntimeCallbacks {
   onSnapshot: (snapshot: GameSnapshot) => void;
 }
 
+// Coordinates the authoritative simulation, client prediction, and session
+// state so the rest of the app can consume one coherent runtime interface.
 export class MatchRuntime {
   private simulation = new MatchSimulation();
 
@@ -119,6 +121,8 @@ export class MatchRuntime {
   }
 
   update(deltaMs: number): void {
+    // Lobby state transitions are time-based, so they are refreshed even before
+    // deciding whether gameplay should advance this frame.
     this.refreshLobbyState();
 
     if (this.paused) {
@@ -138,6 +142,8 @@ export class MatchRuntime {
       return;
     }
 
+    // Pure clients never step the simulation directly; they predict local input
+    // and wait for the host's snapshot stream.
     this.updateReplica(deltaMs);
   }
 
@@ -175,6 +181,8 @@ export class MatchRuntime {
   }
 
   private resetLocalPractice(matchSize: MatchSize, startPlaying: boolean): void {
+    // Practice mode rebuilds everything from scratch so it behaves exactly like
+    // a fresh host session, just without signaling and remote peers.
     this.network.close();
     this.simulation = new MatchSimulation();
     this.simulation.setMatchSize(matchSize);
@@ -212,8 +220,11 @@ export class MatchRuntime {
   private updateAuthoritative(deltaMs: number): void {
     this.fixedAccumulator += deltaMs;
     while (this.fixedAccumulator >= FIXED_STEP_MS) {
+      // Host/practice always inject the local player's latest intent first.
       this.simulation.applyInput(this.buildInputFrame());
       if (this.sessionInfo.mode === 'practice') {
+        // Practice keeps the arena populated by driving every non-local rail
+        // with a lightweight bot that tracks the current ball axis.
         this.applyPracticeBots();
       }
 
@@ -226,6 +237,7 @@ export class MatchRuntime {
 
       let snapshot = this.simulation.step(FIXED_STEP_MS, performance.now());
       if (this.sessionInfo.mode === 'practice') {
+        // Practice auto-serves when the ball stalls so solo sessions stay busy.
         snapshot = this.ensurePracticeBallIsLive(snapshot);
       } else if (this.sessionInfo.lobbyState === 'live') {
         snapshot = this.ensureMultiplayerBallIsLive(snapshot);
@@ -236,6 +248,8 @@ export class MatchRuntime {
       if (this.sessionInfo.mode === 'host') {
         this.sendAccumulator += FIXED_STEP_MS;
         if (this.sendAccumulator >= NETWORK_STEP_MS) {
+          // Snapshots are broadcast at a lower rate than the local physics step;
+          // clients smooth the gaps with interpolation and prediction.
           this.network.broadcastState(snapshot);
           this.sendAccumulator -= NETWORK_STEP_MS;
         }
@@ -248,6 +262,8 @@ export class MatchRuntime {
   private updateReplica(deltaMs: number): void {
     this.fixedAccumulator += deltaMs;
     while (this.fixedAccumulator >= FIXED_STEP_MS) {
+      // Clients still advance a local prediction model so their own rail feels
+      // responsive even before the host confirms the movement.
       const input = this.buildInputFrame();
       this.replica.applyInput(input, FIXED_STEP_MS);
       this.sendAccumulator += FIXED_STEP_MS;
@@ -278,6 +294,8 @@ export class MatchRuntime {
   }
 
   private applyPracticeBots(): void {
+    // Bots are intentionally simple: they only slide along their rail toward
+    // the ball's current projection on that rail's axis.
     const snapshot = this.simulation.getSnapshot();
 
     PLAYER_DEFINITIONS.forEach((definition) => {
@@ -300,6 +318,7 @@ export class MatchRuntime {
   }
 
   private ensurePracticeBallIsLive(snapshot: GameSnapshot): GameSnapshot {
+    // Practice has no human referee, so stuck-ball recovery happens locally.
     if (this.isPracticeBallTrapped(snapshot)) {
       this.practiceTrapElapsedMs += FIXED_STEP_MS;
       if (this.practiceTrapElapsedMs >= PRACTICE_STUCK_TIMEOUT_MS) {
@@ -322,6 +341,8 @@ export class MatchRuntime {
   }
 
   private ensureMultiplayerBallIsLive(snapshot: GameSnapshot): GameSnapshot {
+    // Multiplayer only re-serves from the host when the ball is motionless in
+    // the center after countdown/goal reset logic.
     if (snapshot.phase !== 'playing') {
       return snapshot;
     }
@@ -337,6 +358,7 @@ export class MatchRuntime {
   }
 
   private serveOpeningBall(): void {
+    // Alternate serve vectors so each restart does not bias the same opening lane.
     const directions = [
       { x: 9.2, y: 5.8 },
       { x: -9.0, y: 6.1 },
@@ -349,6 +371,8 @@ export class MatchRuntime {
   }
 
   private isPracticeBallTrapped(snapshot: GameSnapshot): boolean {
+    // Practice uses a stricter stuck check than multiplayer because one local
+    // player cannot reliably free the ball from wall-pin situations alone.
     if (snapshot.phase !== 'playing') {
       return false;
     }
@@ -383,6 +407,8 @@ export class MatchRuntime {
   }
 
   private handleSessionUpdate(info: SessionInfo, peers: PeerRosterEntry[]): void {
+    // Session updates come from the networking layer and may imply role changes,
+    // including host migration after the current host disconnects.
     const shouldPromoteToHost =
       info.isHost &&
       (this.sessionInfo.mode !== 'host' || this.sessionInfo.roomId !== info.roomId || this.sessionInfo.peerId !== info.peerId);
@@ -404,6 +430,8 @@ export class MatchRuntime {
     }
 
     if (shouldPromoteToHost) {
+      // A promoted host starts authoritative simulation from the last snapshot
+      // it received so the match can continue seamlessly.
       this.promoteToHost(info.localPlayerId, this.lastReceivedSnapshot);
     } else if (!info.isHost) {
       this.replica = new ClientReplica(info.localPlayerId);
@@ -439,6 +467,7 @@ export class MatchRuntime {
   }
 
   private syncConnectedPlayers(peers: PeerRosterEntry[]): void {
+    // Only the authoritative side toggles collision/visibility for players.
     if (!(this.sessionInfo.isHost || this.sessionInfo.mode === 'practice')) {
       return;
     }
@@ -452,6 +481,7 @@ export class MatchRuntime {
   }
 
   private maybeStartMultiplayerCountdown(): void {
+    // The host starts countdown exactly once when every expected slot is filled.
     if (
       !this.sessionInfo.isHost ||
       this.sessionInfo.mode === 'practice' ||
@@ -468,6 +498,8 @@ export class MatchRuntime {
   }
 
   private refreshLobbyState(): void {
+    // Countdown completion is derived from the shared start timestamp rather than
+    // a local timer so every client flips to `live` off the same threshold.
     if (
       this.sessionInfo.mode === 'practice' ||
       this.sessionInfo.lobbyState !== 'countdown' ||

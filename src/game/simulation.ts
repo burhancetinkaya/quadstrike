@@ -79,6 +79,8 @@ const railToWorld = (definition: PlayerDefinition, railPosition: number): Vec2 =
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 const FIXED_STEP_MS = 1000 / SIMULATION_HZ;
 
+// Owns the authoritative physics world. Networking and rendering consume
+// snapshots from this class but never mutate Matter bodies directly.
 export class MatchSimulation {
   readonly engine = Engine.create({
     gravity: { x: 0, y: 0 },
@@ -119,6 +121,8 @@ export class MatchSimulation {
   private lastStuckSample: Vec2 = { x: 0, y: 0 };
 
   constructor() {
+    // Each player is represented by a static body constrained to a single rail;
+    // movement is simulated by repositioning that body every fixed step.
     this.players = PLAYER_DEFINITIONS.map((definition) => {
       const start = railToWorld(definition, definition.spawn);
       const body = Bodies.circle(start.x, start.y, PLAYER_RADIUS, {
@@ -170,6 +174,8 @@ export class MatchSimulation {
   }
 
   setPlayerConnected(playerId: PlayerId, connected: boolean): void {
+    // Disconnected players stay in the roster but lose collisions so they stop
+    // affecting the ball or occupying a live slot physically.
     const player = this.players[playerId];
     if (!player) {
       return;
@@ -187,6 +193,8 @@ export class MatchSimulation {
   }
 
   step(deltaMs: number, hostTime = performance.now()): GameSnapshot {
+    // `tick` advances even during freeze periods so match time remains
+    // authoritative and serializable across host/client boundaries.
     this.tick += 1;
 
     if (this.tick * FIXED_STEP_MS >= MATCH_DURATION_MS) {
@@ -199,6 +207,7 @@ export class MatchSimulation {
     }
 
     if (this.phase === 'goal') {
+      // Goals freeze play briefly, then reset positions for the next serve.
       this.goalFreezeRemainingMs = Math.max(0, this.goalFreezeRemainingMs - deltaMs);
       if (this.goalFreezeRemainingMs === 0) {
         this.phase = 'playing';
@@ -211,6 +220,8 @@ export class MatchSimulation {
 
     const deltaSeconds = deltaMs / 1000;
     this.players.forEach((player) => {
+      // Rail movement is clamped manually because Matter only simulates the ball;
+      // players behave more like deterministic paddles than free bodies.
       const previousPosition = player.state.railPosition;
       player.state.railPosition = clamp(
         player.state.railPosition + player.desiredAxis * PLAYER_SPEED * deltaSeconds,
@@ -225,6 +236,8 @@ export class MatchSimulation {
 
     this.applyAutomaticBoosts();
     Engine.update(this.engine, deltaMs);
+    // After Matter resolves collisions we renormalize and clamp so the ball
+    // keeps the game's intended arcade feel.
     this.normalizeBallSpeed();
     this.detectGoalFromBallPosition();
     this.constrainBallInsideArena();
@@ -238,6 +251,7 @@ export class MatchSimulation {
   }
 
   serveBall(direction: Vec2): void {
+    // All serves originate from center so resets are deterministic for clients.
     Body.setPosition(this.ball, { x: 0, y: 0 });
     const normalised = Vector.magnitude(direction) === 0 ? { x: BALL_TRAVEL_SPEED, y: 0 } : Vector.normalise(direction);
     Body.setVelocity(this.ball, { x: normalised.x * BALL_TRAVEL_SPEED, y: normalised.y * BALL_TRAVEL_SPEED });
@@ -245,6 +259,8 @@ export class MatchSimulation {
   }
 
   loadSnapshot(snapshot: GameSnapshot): void {
+    // Host migration restores the current authoritative state from the last
+    // snapshot a client received before taking over.
     this.tick = snapshot.tick;
     this.phase = snapshot.phase;
     this.score = { ...snapshot.score };
@@ -265,6 +281,8 @@ export class MatchSimulation {
   }
 
   private createArenaBodies(): Matter.Body[] {
+    // The octagonal arena is built from eight straight segments: four cardinal
+    // walls around the goals and four diagonal corner chamfers.
     const bodies: Matter.Body[] = [];
     const sideSpan = ARENA_HALF_SIZE - CHAMFER_SIZE;
     const horizontalSegmentLength = sideSpan - GOAL_HALF_WIDTH;
@@ -348,6 +366,8 @@ export class MatchSimulation {
   }
 
   private createGoalSensors(): GoalSensor[] {
+    // Sensors sit just behind live goals so scoring still registers when the
+    // ball tunnels past the wall geometry on a fast frame.
     return [
       {
         side: 'north',
@@ -385,6 +405,8 @@ export class MatchSimulation {
   }
 
   private createGoalBlockers(): GoalBlocker[] {
+    // Blockers are turned on/off based on match size so inactive goals behave
+    // like normal walls without changing the arena geometry.
     return [
       {
         side: 'north',
@@ -420,11 +442,14 @@ export class MatchSimulation {
   private syncGoalBlockers(): void {
     this.goalBlockers.forEach((blocker) => {
       blocker.body.collisionFilter.category = 0x0001;
+      // Active goals disable their blocker, inactive goals leave it collidable.
       blocker.body.collisionFilter.mask = isGoalSideActive(blocker.side, this.matchSize) ? 0 : 0xffffffff;
     });
   }
 
   private handleCollisionStart(event: Matter.IEventCollision<Matter.Engine>): void {
+    // Collision events are used only for bookkeeping and extra impulse; the
+    // overall ball motion still comes from the deterministic physics step.
     event.pairs.forEach((pair: Matter.Pair) => {
       const labels = [pair.bodyA.label, pair.bodyB.label];
 
@@ -454,6 +479,7 @@ export class MatchSimulation {
           ? { x: player.state.velocity, y: 0 }
           : { x: 0, y: player.state.velocity };
 
+      // Rail speed adds a small tangential kick so moving into the ball matters.
       Body.setVelocity(this.ball, {
         x: this.ball.velocity.x + playerVelocity.x * 0.05,
         y: this.ball.velocity.y + playerVelocity.y * 0.05,
@@ -463,6 +489,8 @@ export class MatchSimulation {
   }
 
   private applyAutomaticBoosts(): void {
+    // Boost is proximity-triggered rather than button-triggered, which keeps the
+    // input model tiny and identical for bots, host, and clients.
     this.players.forEach((player) => {
       if (!player.state.connected || player.state.boostCooldownMs > 0) {
         return;
@@ -486,6 +514,8 @@ export class MatchSimulation {
   }
 
   private normalizeBallSpeed(): void {
+    // Constant-speed travel is what makes rebounds feel air-hockey-like instead
+    // of gradually damping into a physics sim.
     const speed = Vector.magnitude(this.ball.velocity);
     if (speed <= 0.0001) {
       return;
@@ -510,6 +540,7 @@ export class MatchSimulation {
     this.goalFreezeRemainingMs = GOAL_FREEZE_MS;
     this.scorerId = this.lastTouchedBy;
 
+    // The player defending that rail concedes when the goal is crossed.
     const concededPlayer = PLAYER_DEFINITIONS.find((player) => player.railSide === _side);
     if (concededPlayer) {
       this.score[concededPlayer.key] += 1;
@@ -519,6 +550,8 @@ export class MatchSimulation {
   }
 
   private detectGoalFromBallPosition(): void {
+    // Position-based detection acts as a backstop for sensor misses caused by
+    // high-speed motion or tunneling at the goal line.
     if (this.phase !== 'playing') {
       return;
     }
@@ -552,6 +585,7 @@ export class MatchSimulation {
   }
 
   private resetBodies(): void {
+    // Players reset to their spawn points after goals and when a session starts.
     this.players.forEach((player) => {
       player.state.railPosition = player.definition.spawn;
       player.state.velocity = 0;
@@ -566,6 +600,8 @@ export class MatchSimulation {
   }
 
   private constrainBallInsideArena(): void {
+    // Matter handles most collisions, but this extra clamp keeps the ball from
+    // escaping the octagon through shallow-angle numerical edge cases.
     const maxAxis = ARENA_HALF_SIZE - BALL_RADIUS;
     const diagonalLimit = (ARENA_HALF_SIZE + (ARENA_HALF_SIZE - CHAMFER_SIZE)) - BALL_RADIUS * Math.SQRT2;
     const inVerticalGoalLane =
@@ -599,6 +635,7 @@ export class MatchSimulation {
         return;
       }
 
+      // Reflect across the chamfer normal to mimic a diagonal wall bounce.
       const excess = value - limit;
       const correction = excess / 2;
       x -= normal.x * correction;
@@ -627,6 +664,8 @@ export class MatchSimulation {
   }
 
   private updateStuckDetection(deltaMs: number): void {
+    // Multiplayer and practice both rely on a central stuck-ball reset so
+    // degenerate collisions do not deadlock the match forever.
     if (this.phase !== 'playing') {
       this.resetStuckDetection();
       return;
@@ -664,6 +703,8 @@ export class MatchSimulation {
   }
 
   private createSnapshot(hostTime: number): GameSnapshot {
+    // Snapshots are plain data copies so they can be serialized and replayed by
+    // the networking and rendering layers without exposing live Matter objects.
     this.networkSequence += 1;
 
     return {

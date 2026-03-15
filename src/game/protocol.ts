@@ -9,6 +9,7 @@ export enum PacketType {
   State = 2,
 }
 
+// Physics values are quantized to keep WebRTC packets compact and fixed-size.
 const POSITION_SCALE = 8;
 const VELOCITY_SCALE = 8;
 
@@ -35,6 +36,7 @@ const defaultScore = (): ScoreState => ({
 });
 
 export const serializeInputPacket = (input: InputFrame): ArrayBuffer => {
+  // Input packets stay tiny because clients only need to send intent, not state.
   const buffer = new ArrayBuffer(INPUT_PACKET_BYTES);
   const view = new DataView(buffer);
   view.setUint8(0, PacketType.Input);
@@ -61,6 +63,8 @@ export const deserializeInputPacket = (buffer: ArrayBuffer): InputFrame => {
 };
 
 export const serializeStatePacket = (snapshot: GameSnapshot): ArrayBuffer => {
+  // State packets pack the full authoritative frame into a fixed byte layout so
+  // hosts can broadcast them without per-field JSON overhead.
   const buffer = new ArrayBuffer(STATE_PACKET_BYTES);
   const view = new DataView(buffer);
 
@@ -106,6 +110,7 @@ export const deserializeStatePacket = (buffer: ArrayBuffer): GameSnapshot => {
   });
 
   const players = Array.from({ length: 4 }, (_, index) => {
+    // Player slots are always serialized in fixed id order.
     const offset = 14 + index * 6;
     return {
       id: index as PlayerId,

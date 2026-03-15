@@ -18,6 +18,8 @@ if (!root) {
 const DEFAULT_ROOM_ID = 'ARENA';
 
 const ensureStitchFonts = (): void => {
+  // The UI shell is injected at runtime, so fonts are also bootstrapped here to
+  // avoid depending on extra tags in `index.html`.
   const stylesheetId = 'quadstrike-stitch-fonts';
   if (document.getElementById(stylesheetId)) {
     return;
@@ -49,6 +51,8 @@ const ensureStitchFonts = (): void => {
 
 ensureStitchFonts();
 
+// The app shell stays in one template literal so the rest of the file can
+// assume all HUD, modal, and control nodes already exist.
 root.innerHTML = `
   <div class="shell">
     <div class="shell-noise" aria-hidden="true"></div>
@@ -217,6 +221,8 @@ root.innerHTML = `
   </div>
 `;
 
+// Cache every interactive DOM node once up front. The rest of the module treats
+// these references as the long-lived UI surface for the Phaser scene/runtime.
 const gameRoot = root.querySelector<HTMLDivElement>('#game-root');
 const scoreboardLeft = root.querySelector<HTMLDivElement>('#scoreboard-left');
 const scoreboardRight = root.querySelector<HTMLDivElement>('#scoreboard-right');
@@ -390,6 +396,8 @@ let networkCountdownStartAtMs: number | null = null;
 let networkCountdownValue: string | null = null;
 
 const updateMetricsHud = (session: SessionInfo, fps = 0): void => {
+  // Runtime owns the truth for networking stats; the HUD only projects that
+  // state into a more readable summary for the player.
   const stats = runtime?.getNetworkStats() ?? {
     pingMs: 0,
     packetLoss: 0,
@@ -423,6 +431,8 @@ const updateMetricsHud = (session: SessionInfo, fps = 0): void => {
 };
 
 const syncRuntimePause = (): void => {
+  // The simulation should stop whenever the player cannot meaningfully interact
+  // with it, such as portrait mode, result modal, or practice countdown.
   runtime?.setPaused(!isLandscape || resultModalOpen || matchFinished || (countdownActive && countdownMode === 'practice'));
 };
 
@@ -466,6 +476,7 @@ const stopNetworkCountdownVisual = (): void => {
   networkCountdownStartAtMs = null;
   networkCountdownValue = null;
   if (countdownMode === 'multiplayer') {
+    // Multiplayer countdown only owns the pause state while it is visible.
     countdownActive = false;
     countdownMode = null;
     hideCountdownOverlay();
@@ -490,6 +501,8 @@ const startNetworkCountdownVisual = (startAtMs: number): void => {
     return;
   }
 
+  // Clients all receive the same host timestamp, so the UI simply counts down
+  // against local wall clock time until that shared instant is reached.
   stopNetworkCountdownVisual();
   networkCountdownStartAtMs = startAtMs;
   countdownActive = true;
@@ -520,6 +533,8 @@ const startNetworkCountdownVisual = (startAtMs: number): void => {
 };
 
 const setStatus = (message: string): void => {
+  // The status line is mirrored into the session modal so transient networking
+  // feedback stays visible even while the dialog is open.
   latestStatusMessage = message;
   statusText.textContent = message;
   if (sessionDialogMode) {
@@ -556,6 +571,8 @@ const closeSessionDialog = (): void => {
 };
 
 const openSessionDialog = (mode: 'practice' | 'host' | 'join'): void => {
+  // One modal handles all entry points; its labels and visible fields switch
+  // based on the requested session mode.
   sessionDialogMode = mode;
   sessionDialogPending = false;
   sessionModal.classList.add('visible');
@@ -599,6 +616,8 @@ const openSessionDialog = (mode: 'practice' | 'host' | 'join'): void => {
 const normalizeMatchSize = (value: string): MatchSize => (value === '2' ? 2 : 4);
 
 const getConfiguredSignalUrl = (): string => {
+  // Invalid signaling URLs should fail before the user attempts a connection so
+  // the error is obvious and local to configuration.
   const trimmed = FRONTEND_CONFIG.signalingUrl.trim();
   let parsed: URL;
   try {
@@ -615,6 +634,7 @@ const getConfiguredSignalUrl = (): string => {
 };
 
 const normalizeRoomId = (value: string): string => {
+  // Room ids are short, uppercase, and safe to display/log on both client and server.
   const normalized = value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 8);
   if (!normalized) {
     throw new Error('Room ID cannot be empty.');
@@ -623,6 +643,8 @@ const normalizeRoomId = (value: string): string => {
 };
 
 const syncLobbyPresentation = (session: SessionInfo): void => {
+  // Lobby overlays are derived entirely from session state so the scene and the
+  // DOM never disagree about whether the match is waiting, counting down, or live.
   if (matchFinished) {
     hideLobbyOverlay();
     stopNetworkCountdownVisual();
@@ -661,6 +683,8 @@ const syncLobbyPresentation = (session: SessionInfo): void => {
 runtime = new MatchRuntime({
   onStatus: (message) => setStatus(message),
   onSession: (session) => {
+    // Session changes can arrive independently of new snapshots, for example
+    // when peers join/leave or host migration happens.
     currentSessionInfo = session;
     const resultSnapshot = runtime?.getAuthoritativeSnapshot();
     if (resultSnapshot) {
@@ -711,6 +735,8 @@ const resolveAxis = (negative: boolean, positive: boolean): -1 | 0 | 1 => {
 };
 
 const applyMovementAxis = (): void => {
+  // Touch input wins over keyboard input so mobile controls cannot be cancelled
+  // accidentally by a stale desktop key state.
   const touchAxis = resolveAxis(inputState.touchLeft, inputState.touchRight);
   const keyboardAxis = resolveAxis(inputState.keyboardLeft, inputState.keyboardRight);
   runtime?.setMovementAxis(touchAxis !== 0 ? touchAxis : keyboardAxis);
@@ -725,6 +751,8 @@ const showToast = (message: string, color = '#ffffff'): void => {
 };
 
 const formatMatchClock = (snapshot: GameSnapshot): string => {
+  // `tick` is authoritative across both practice and multiplayer, so the HUD
+  // clock is always derived from simulation time instead of wall clock.
   const elapsedMs = Math.min(MATCH_DURATION_MS, Math.round(snapshot.tick * (1000 / SIMULATION_HZ)));
   const remainingMs = Math.max(0, MATCH_DURATION_MS - elapsedMs);
   const totalSeconds = Math.ceil(remainingMs / 1000);
@@ -734,6 +762,8 @@ const formatMatchClock = (snapshot: GameSnapshot): string => {
 };
 
 function getWinnerSummary(snapshot: GameSnapshot): { winnerText: string; summaryText: string } {
+  // Practice ranks active rails; multiplayer ranks connected peers only, so a
+  // disconnected slot never wins by conceding zero goals.
   const activePlayers =
     currentSessionInfo?.mode === 'practice'
       ? getActivePlayerIds(currentSessionInfo.matchSize)
@@ -788,6 +818,8 @@ const delay = (ms: number): Promise<void> =>
   });
 
 const runStartCountdown = async (): Promise<void> => {
+  // Practice uses a local-only countdown. Multiplayer uses the host-driven
+  // timestamped countdown handled by `startNetworkCountdownVisual`.
   stopNetworkCountdownVisual();
   resultModal.classList.remove('visible');
   resultModal.setAttribute('aria-hidden', 'true');
@@ -827,6 +859,8 @@ const runStartCountdown = async (): Promise<void> => {
 };
 
 const setScoreboard = (snapshot: GameSnapshot): void => {
+  // Scoreboard state comes from the latest snapshot, but visibility/ranking also
+  // depends on which players are active in the current session configuration.
   const formattedClock = formatMatchClock(snapshot);
   matchClock.textContent = formattedClock;
   mobileMatchClock.textContent = formattedClock;
@@ -884,6 +918,8 @@ const setScoreboard = (snapshot: GameSnapshot): void => {
 };
 
 const scene = new ArenaScene(runtime, ({ snapshot, session, fps }) => {
+  // Phaser pushes HUD updates every render frame; the DOM stays outside the
+  // canvas so it can remain responsive and easy to style.
   setScoreboard(snapshot);
   modeValue.textContent = session.mode.toUpperCase();
   playerValue.textContent = PLAYER_DEFINITIONS[session.localPlayerId].label;
@@ -921,6 +957,8 @@ const game = new Phaser.Game({
 });
 
 new ResizeObserver(() => {
+  // Phaser's resize mode still needs the container's latest box size when the
+  // surrounding layout changes.
   game.scale.resize(gameRoot.clientWidth, gameRoot.clientHeight);
 }).observe(gameRoot);
 
@@ -936,6 +974,7 @@ preventTouchDefaults(moveLeft);
 preventTouchDefaults(moveRight);
 
 const bindTouchAxis = (button: HTMLElement, axis: -1 | 1): void => {
+  // Pointer events give one implementation that covers touch and mouse input.
   const activate = (): void => {
     if (axis === -1) {
       inputState.touchLeft = true;
@@ -1022,6 +1061,8 @@ const submitSessionDialog = async (): Promise<void> => {
   }
 
   try {
+    // The dialog stays pessimistic until the requested mode is fully established,
+    // so users see a clear success/error state instead of a silent close.
     sessionDialogPending = true;
     sessionModalFeedback.dataset.state = 'pending';
     if (sessionDialogMode === 'practice') {
@@ -1108,6 +1149,8 @@ sessionRoomIdInput.addEventListener('keydown', (event) => {
 });
 
 observeLandscape((landscape) => {
+  // Orientation is handled outside Phaser so the overlay can hide the whole app
+  // before the user resumes play.
   isLandscape = landscape;
   orientationOverlay.classList.toggle('visible', !landscape);
   syncRuntimePause();

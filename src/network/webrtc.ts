@@ -34,6 +34,7 @@ const resolveBinaryPayload = async (payload: string | Blob | ArrayBuffer | Array
   return null;
 };
 
+// Wraps a single peer-to-peer data channel used for low-latency input/state sync.
 export class PeerLink {
   private readonly connection = new RTCPeerConnection({
     iceServers: toIceServers(),
@@ -74,6 +75,8 @@ export class PeerLink {
       return;
     }
 
+    // Hosts/initiators open an unreliable unordered channel because the latest
+    // state is always more valuable than retransmitting stale packets.
     if (!this.channel) {
       const channel = this.connection.createDataChannel('quad-arena-state', {
         ordered: false,
@@ -90,6 +93,8 @@ export class PeerLink {
   }
 
   async handleSignal(signal: unknown): Promise<void> {
+    // ICE candidates may arrive before the remote description, so they are
+    // buffered until the peer connection is ready to accept them.
     if (typeof signal !== 'object' || signal === null) {
       return;
     }
@@ -158,6 +163,8 @@ export class PeerLink {
     });
     this.channel.addEventListener('error', () => this.callbacks.onError('Data channel error.'));
     this.channel.addEventListener('message', async (event) => {
+      // Packet type lives in the first byte so one data channel can carry both
+      // input and state payloads.
       const payload = await resolveBinaryPayload(event.data);
       if (!payload) {
         return;
@@ -174,6 +181,8 @@ export class PeerLink {
   }
 
   private startRoundTripPolling(): void {
+    // Browser RTT stats are polled periodically because data channels do not
+    // expose a simpler ping API.
     this.stopRoundTripPolling();
     void this.pollRoundTripTime();
     this.roundTripPollTimer = window.setInterval(() => {
@@ -203,6 +212,8 @@ export class PeerLink {
           return;
         }
 
+        // Prefer the active pair when available, but keep a fallback sample in
+        // case browsers omit the nominated/selected flags.
         const pair = stat as RTCStats & {
           currentRoundTripTime?: number;
           nominated?: boolean;

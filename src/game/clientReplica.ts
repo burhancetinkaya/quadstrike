@@ -18,6 +18,8 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
 
 const lerp = (from: number, to: number, alpha: number): number => from + (to - from) * alpha;
 
+// Keeps a short snapshot history for interpolation while predicting the local
+// player's rail so remote latency does not make controls feel sluggish.
 export class ClientReplica {
   private readonly clock = new ClockSynchronizer();
 
@@ -41,6 +43,8 @@ export class ClientReplica {
   }
 
   receiveSnapshot(snapshot: GameSnapshot, receivedAt: number): void {
+    // Remote snapshots are timestamped onto a synchronized timeline so render
+    // frames can interpolate between them later.
     const cloned = cloneSnapshot(snapshot);
     const timelineMs = snapshot.tick * FIXED_STEP_MS;
     this.clock.observeSnapshot(timelineMs, receivedAt);
@@ -50,6 +54,7 @@ export class ClientReplica {
 
     const authoritativePlayer = cloned.players[this.localPlayerId];
     if (!this.initializedPrediction) {
+      // The first snapshot seeds local prediction state directly.
       this.predictedRailPosition = authoritativePlayer.railPosition;
       this.predictedVelocity = authoritativePlayer.velocity;
       this.predictedBoostCooldownMs = authoritativePlayer.boostCooldownMs;
@@ -58,6 +63,8 @@ export class ClientReplica {
     }
 
     const correction = authoritativePlayer.railPosition - this.predictedRailPosition;
+    // Small errors are blended out; large ones snap immediately to avoid a
+    // visibly wrong paddle position after packet loss or host migration.
     if (Math.abs(correction) > 36) {
       this.predictedRailPosition = authoritativePlayer.railPosition;
     } else {
@@ -68,6 +75,8 @@ export class ClientReplica {
   }
 
   applyInput(input: InputFrame, deltaMs: number): void {
+    // Prediction only simulates the local rail. Ball and remote players always
+    // come from host snapshots.
     if (!this.initializedPrediction) {
       return;
     }
@@ -87,6 +96,8 @@ export class ClientReplica {
   }
 
   getRenderSnapshot(now = performance.now()): GameSnapshot | null {
+    // Rendering intentionally lags behind the newest snapshot by a small fixed
+    // window so there is usually a "next" sample to interpolate toward.
     if (this.snapshots.length === 0) {
       return this.latestSnapshot ? cloneSnapshot(this.latestSnapshot) : null;
     }
@@ -126,6 +137,8 @@ export class ClientReplica {
     });
 
     if (this.initializedPrediction) {
+      // The local player is overwritten with predicted movement after the shared
+      // snapshot is interpolated so its rail responds immediately.
       interpolated.players[this.localPlayerId] = {
         ...interpolated.players[this.localPlayerId],
         railPosition: this.predictedRailPosition,

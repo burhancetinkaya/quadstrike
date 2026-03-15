@@ -42,6 +42,7 @@ export type SignalingMessage =
       message: string;
     };
 
+// Thin WebSocket wrapper used only for room membership and WebRTC negotiation.
 export class SignalingClient {
   private socket: WebSocket | null = null;
 
@@ -56,6 +57,8 @@ export class SignalingClient {
   ): Promise<Extract<SignalingMessage, { type: 'joined' }>> {
     this.close();
 
+    // Newer servers accept a dedicated `host` join shape, but we still keep a
+    // fallback for older behavior so local upgrades remain painless.
     const primaryPayload =
       requestedMode === 'host'
         ? {
@@ -111,6 +114,8 @@ export class SignalingClient {
       });
 
       socket.addEventListener('message', (event) => {
+        // Everything on the signaling channel is JSON by design; gameplay data
+        // goes over WebRTC once peers connect.
         let message: SignalingMessage;
         try {
           message = JSON.parse(String(event.data)) as SignalingMessage;
@@ -170,6 +175,8 @@ export class SignalingClient {
   }
 
   sendMatchCountdown(startAtMs: number): void {
+    // Countdown start is broadcast via the server so even peers without a data
+    // channel yet can learn the match start timestamp.
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       return;
     }

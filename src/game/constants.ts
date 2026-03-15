@@ -1,5 +1,7 @@
 import type { MatchSize, PlayerDefinition, PlayerId, RailSide, ScoreState, Vec2 } from './types';
 
+// Core timing and tuning values for the physics step, networking cadence, and
+// the small amount of latency we keep buffered for interpolation.
 export const SIMULATION_HZ = 60;
 export const NETWORK_SEND_HZ = 20;
 export const INTERPOLATION_DELAY_MS = 100;
@@ -36,6 +38,7 @@ export const SCORE_ORDER: (keyof ScoreState)[] = ['white', 'blue', 'orange', 'gr
 export const DISABLED_GOAL_COLOR = 0x4f5d52;
 export const CORNER_GOAL_COLOR = 0x848b90;
 
+// Player definitions double as render metadata and authoritative rail limits.
 export const PLAYER_DEFINITIONS: PlayerDefinition[] = [
   {
     id: 0,
@@ -91,6 +94,7 @@ export const PLAYER_DEFINITIONS: PlayerDefinition[] = [
   },
 ];
 
+// The arena is an octagon: four straight walls plus four chamfered corners.
 export const FIELD_POLYGON: Vec2[] = [
   { x: -ARENA_HALF_SIZE + CHAMFER_SIZE, y: -ARENA_HALF_SIZE },
   { x: ARENA_HALF_SIZE - CHAMFER_SIZE, y: -ARENA_HALF_SIZE },
@@ -142,6 +146,8 @@ export const CORNER_GOAL_SEGMENTS = [
   },
 ] as const;
 
+// In 2P mode only opposite rails/goals are active; the helpers below centralize
+// that rule so rendering, physics, and networking stay consistent.
 export const getActivePlayerIds = (matchSize: MatchSize): PlayerId[] =>
   matchSize === 2 ? [0, 2] : [0, 1, 2, 3];
 
