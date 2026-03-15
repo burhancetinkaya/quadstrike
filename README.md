@@ -18,6 +18,15 @@ QuadStrike is a browser-based multiplayer physics sports prototype built from th
 3. Start the web app with `npm run dev`.
 4. Open the Vite URL on one or more devices and either host or join the same room ID.
 
+## Deploy
+
+The easiest free deployment path for the current architecture is Render:
+
+- static frontend on a Render Static Site
+- signaling server on a free Render Web Service
+
+See [docs/DEPLOYMENT.md](/Users/burhancetinkaya/Development/quad-arena-soccer/docs/DEPLOYMENT.md) for the full process and the included [render.yaml](/Users/burhancetinkaya/Development/quad-arena-soccer/render.yaml).
+
 ## Current Scope
 
 - Landscape-only responsive game shell with touch and keyboard controls

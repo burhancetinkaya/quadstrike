@@ -1,7 +1,18 @@
+import http from 'node:http';
 import { WebSocketServer } from 'ws';
 
 const port = Number(process.env.PORT ?? 8080);
-const wss = new WebSocketServer({ port });
+const server = http.createServer((request, response) => {
+  if (request.url === '/health') {
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ ok: true, service: 'quadstrike-signaling' }));
+    return;
+  }
+
+  response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+  response.end('QuadStrike signaling server is running.\n');
+});
+const wss = new WebSocketServer({ server });
 const OPEN = 1;
 
 /** @type {Map<string, { peers: Map<string, import('ws').WebSocket>, playerAssignments: Map<string, number>, hostPeerId: string | null, matchSize: 2 | 4 }>} */
@@ -247,4 +258,6 @@ wss.on('connection', (socket) => {
   });
 });
 
-console.log(`QuadStrike signaling server listening on ws://localhost:${port}`);
+server.listen(port, () => {
+  console.log(`QuadStrike signaling server listening on ws://localhost:${port}`);
+});
