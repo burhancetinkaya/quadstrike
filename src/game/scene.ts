@@ -76,6 +76,10 @@ export class ArenaScene extends Phaser.Scene {
 
   private objectScale = 1;
 
+  private playerRenderScale = 1;
+
+  private ballRenderScale = 1;
+
   private lastScoreTotal = 0;
 
   private flashStrength = 0;
@@ -265,6 +269,9 @@ export class ArenaScene extends Phaser.Scene {
     this.viewportCenter.set(this.scale.width * 0.5, this.scale.height * 0.56);
     this.projectionScale = Math.min(this.scale.width / 1080, this.scale.height / 680);
     this.objectScale = Math.max(0.72, this.projectionScale);
+    const actorScale = this.getActorScaleMultipliers();
+    this.playerRenderScale = this.objectScale * actorScale.player;
+    this.ballRenderScale = this.objectScale * actorScale.ball;
     this.flashOverlay.setSize(this.scale.width, this.scale.height);
     this.flashOverlay.setPosition(this.scale.width * 0.5, this.scale.height * 0.5);
     this.drawField();
@@ -343,8 +350,8 @@ export class ArenaScene extends Phaser.Scene {
     const lift = Math.min(18, speed * 4);
     const ballPosition = this.project({ x: snapshot.ball.x, y: snapshot.ball.y }, 16 + lift);
     this.ballVisual.container.setPosition(ballPosition.x, ballPosition.y);
-    this.ballVisual.container.setScale(this.objectScale);
-    this.ballVisual.body.y = -(10 + lift * 0.35) * this.objectScale;
+    this.ballVisual.container.setScale(this.ballRenderScale);
+    this.ballVisual.body.y = -(10 + lift * 0.35) * this.ballRenderScale;
     this.ballVisual.spin += (snapshot.ball.vx - snapshot.ball.vy) * 0.0024;
     this.ballVisual.body.setRotation(this.ballVisual.spin);
     this.ballVisual.shadow.setScale(1 + Math.min(0.35, speed * 0.08), 1);
@@ -365,12 +372,12 @@ export class ArenaScene extends Phaser.Scene {
     const world = projectRailPosition(definition, player.railPosition);
     const projected = this.project(world, 22);
     visual.container.setPosition(projected.x, projected.y);
-    visual.container.setScale(this.objectScale);
+    visual.container.setScale(this.playerRenderScale);
     visual.container.setDepth(projected.y + 20);
     visual.container.setAlpha(player.connected ? 1 : 0.28);
     visual.ring.setStrokeStyle(
       this.runtime.getSessionInfo().localPlayerId === player.id ? 6 : 3,
-      0xffffff,
+      toColorNumber(definition.color),
       this.runtime.getSessionInfo().localPlayerId === player.id ? 0.95 : 0.3,
     );
     visual.shadow.fillAlpha = player.connected ? 0.24 : 0.1;
@@ -420,9 +427,9 @@ export class ArenaScene extends Phaser.Scene {
         const projected = this.project(projectRailPosition(definition, player.railPosition), 12);
         this.boundsGraphics.strokeEllipse(
           projected.x,
-          projected.y - 8 * this.objectScale,
-          PLAYER_RADIUS * this.objectScale * 1.45,
-          PLAYER_RADIUS * this.objectScale * 0.9,
+          projected.y - 8 * this.playerRenderScale,
+          PLAYER_RADIUS * this.playerRenderScale * 1.45,
+          PLAYER_RADIUS * this.playerRenderScale * 0.9,
         );
       });
 
@@ -430,8 +437,8 @@ export class ArenaScene extends Phaser.Scene {
       this.boundsGraphics.strokeEllipse(
         ball.x,
         ball.y,
-        BALL_RADIUS * this.objectScale * 1.5,
-        BALL_RADIUS * this.objectScale * 0.9,
+        BALL_RADIUS * this.ballRenderScale * 1.5,
+        BALL_RADIUS * this.ballRenderScale * 0.9,
       );
     }
   }
@@ -449,7 +456,7 @@ export class ArenaScene extends Phaser.Scene {
     const centerGlow = this.add.circle(0, -18, 18, innerFill, 0.16);
     const core = this.add.circle(0, -18, 11, centerFill, 0.94);
     const pulseRing = this.add.circle(0, -18, 38, 0xffffff, 0).setStrokeStyle(0, toColorNumber(definition.color), 0);
-    const ring = this.add.circle(0, -18, 35, 0xffffff, 0).setStrokeStyle(4, 0xffffff, 0.72);
+    const ring = this.add.circle(0, -18, 35, 0xffffff, 0).setStrokeStyle(4, toColorNumber(definition.color), 0.72);
 
     container.add([shadow, glow, pulseRing, base, centerGlow, core, ring]);
     return { container, ring, pulseRing, shadow, pulse: 0 };
@@ -612,6 +619,31 @@ export class ArenaScene extends Phaser.Scene {
       case 'west':
         return { x: -depth, y: 0 };
     }
+  }
+
+  private getActorScaleMultipliers(): { player: number; ball: number } {
+    const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+    const compactViewport = this.scale.width <= 960 || this.scale.height <= 560;
+    const veryCompactViewport = this.scale.width <= 720 || this.scale.height <= 430;
+
+    if (coarsePointer || veryCompactViewport) {
+      return {
+        player: veryCompactViewport ? 0.78 : 0.84,
+        ball: veryCompactViewport ? 0.72 : 0.8,
+      };
+    }
+
+    if (compactViewport) {
+      return {
+        player: 0.9,
+        ball: 0.86,
+      };
+    }
+
+    return {
+      player: 1,
+      ball: 1,
+    };
   }
 
   private getHorizontalSpan(y: number): { from: number; to: number } {

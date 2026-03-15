@@ -67,6 +67,8 @@ export class MatchNetwork {
 
   private stats = createStats();
 
+  private readonly peerRoundTripMs = new Map<string, number>();
+
   private lastStateSequence = 0;
 
   private receivedStatePackets = 0;
@@ -152,6 +154,7 @@ export class MatchNetwork {
   }
 
   private async joinRoom(url: string, roomId: string, requestedMode: SessionMode, matchSize?: MatchSize): Promise<SessionInfo> {
+    this.stats = createStats();
     const peerId = createPeerId();
     const joined = await this.signaling.connect(url, roomId, peerId, requestedMode, matchSize);
     if (requestedMode === 'host' && !joined.isHost) {
@@ -190,6 +193,8 @@ export class MatchNetwork {
     this.signaling.leave();
     this.links.forEach((link) => link.close());
     this.links.clear();
+    this.peerRoundTripMs.clear();
+    this.stats = createStats();
     this.clockSync.reset();
     this.lastStateSequence = 0;
     this.receivedStatePackets = 0;
@@ -308,17 +313,24 @@ export class MatchNetwork {
           this.receivedStatePackets + this.droppedStatePackets === 0
             ? 0
             : (this.droppedStatePackets / (this.receivedStatePackets + this.droppedStatePackets)) * 100;
-        this.stats.pingMs = Math.max(0, receivedAt - snapshot.hostTime);
         this.clockSync.observeSnapshot(snapshot.tick * (1000 / 60), receivedAt);
         this.stats.tickDriftMs = Math.abs(this.clockSync.getOffsetMs());
         this.stats.interpolationDelayMs = snapshot.interpolationDelayMs;
         this.callbacks.onSnapshot(snapshot, receivedAt);
+      },
+      onRoundTripTime: (roundTripMs) => {
+        if (typeof roundTripMs === 'number' && Number.isFinite(roundTripMs)) {
+          this.peerRoundTripMs.set(remotePeerId, roundTripMs);
+          this.recomputePingStat();
+        }
       },
       onOpen: () => {
         this.updateConnectedPeers();
       },
       onClose: () => {
         this.links.delete(remotePeerId);
+        this.peerRoundTripMs.delete(remotePeerId);
+        this.recomputePingStat();
         this.updateConnectedPeers();
       },
       onError: (message) => {
@@ -338,6 +350,23 @@ export class MatchNetwork {
   private updateConnectedPeers(): void {
     const openConnections = [...this.links.values()].filter((link) => link.isOpen()).length;
     this.stats.connectedPeers = this.sessionInfo.isHost ? openConnections : Number(openConnections > 0);
+    if (openConnections === 0) {
+      this.stats.pingMs = 0;
+    }
+  }
+
+  private recomputePingStat(): void {
+    const roundTripSamples = [...this.peerRoundTripMs.entries()]
+      .filter(([peerId]) => this.links.get(peerId)?.isOpen())
+      .map(([, roundTripMs]) => roundTripMs);
+
+    if (roundTripSamples.length === 0) {
+      this.stats.pingMs = 0;
+      return;
+    }
+
+    const averageRoundTripMs = roundTripSamples.reduce((sum, sample) => sum + sample, 0) / roundTripSamples.length;
+    this.stats.pingMs = averageRoundTripMs;
   }
 
   private describePlayer(playerId: PlayerId): string {

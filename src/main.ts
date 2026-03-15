@@ -59,6 +59,28 @@ root.innerHTML = `
         <div class="brand">
           <h1>QUAD<span>STRIKE</span></h1>
         </div>
+        <div class="mobile-score-strip" id="mobile-score-strip">
+          <div class="mobile-score-card white" data-mobile-player-key="white" data-mobile-player-id="0">
+            <span class="mobile-score-dot" aria-hidden="true"></span>
+            <span class="mobile-score-value" data-mobile-score="white">0</span>
+          </div>
+          <div class="mobile-score-card orange" data-mobile-player-key="orange" data-mobile-player-id="2">
+            <span class="mobile-score-dot" aria-hidden="true"></span>
+            <span class="mobile-score-value" data-mobile-score="orange">0</span>
+          </div>
+          <div class="mobile-clock-panel">
+            <span class="mobile-clock-label">Time</span>
+            <span class="mobile-match-clock" id="mobile-match-clock">2:00</span>
+          </div>
+          <div class="mobile-score-card green" data-mobile-player-key="green" data-mobile-player-id="3">
+            <span class="mobile-score-dot" aria-hidden="true"></span>
+            <span class="mobile-score-value" data-mobile-score="green">0</span>
+          </div>
+          <div class="mobile-score-card blue" data-mobile-player-key="blue" data-mobile-player-id="1">
+            <span class="mobile-score-dot" aria-hidden="true"></span>
+            <span class="mobile-score-value" data-mobile-score="blue">0</span>
+          </div>
+        </div>
         <div class="topbar-actions">
           <button id="practice-button">
             <span class="button-dot"></span>
@@ -199,6 +221,7 @@ const gameRoot = root.querySelector<HTMLDivElement>('#game-root');
 const scoreboardLeft = root.querySelector<HTMLDivElement>('#scoreboard-left');
 const scoreboardRight = root.querySelector<HTMLDivElement>('#scoreboard-right');
 const matchClock = root.querySelector<HTMLDivElement>('#match-clock');
+const mobileMatchClock = root.querySelector<HTMLSpanElement>('#mobile-match-clock');
 const goalToast = root.querySelector<HTMLDivElement>('#goal-toast');
 const countdownOverlay = root.querySelector<HTMLDivElement>('#countdown-overlay');
 const countdownValue = root.querySelector<HTMLSpanElement>('#countdown-value');
@@ -245,6 +268,7 @@ if (
   !scoreboardLeft ||
   !scoreboardRight ||
   !matchClock ||
+  !mobileMatchClock ||
   !goalToast ||
   !countdownOverlay ||
   !countdownValue ||
@@ -320,11 +344,32 @@ const scoreCards = PLAYER_DEFINITIONS.map((player) => {
   };
 });
 
+const mobileScoreCards = PLAYER_DEFINITIONS.map((player) => {
+  const card = root.querySelector<HTMLDivElement>(`[data-mobile-player-key="${player.key}"]`);
+  const value = root.querySelector<HTMLElement>(`[data-mobile-score="${player.key}"]`);
+  if (!card || !value) {
+    throw new Error(`Missing mobile scoreboard card for ${player.key}.`);
+  }
+
+  return {
+    definition: player,
+    card,
+    value,
+  };
+});
+
 const scoreValues = {
   white: root.querySelector<HTMLElement>('[data-score="white"]'),
   blue: root.querySelector<HTMLElement>('[data-score="blue"]'),
   orange: root.querySelector<HTMLElement>('[data-score="orange"]'),
   green: root.querySelector<HTMLElement>('[data-score="green"]'),
+};
+
+const mobileScoreValues = {
+  white: root.querySelector<HTMLElement>('[data-mobile-score="white"]'),
+  blue: root.querySelector<HTMLElement>('[data-mobile-score="blue"]'),
+  orange: root.querySelector<HTMLElement>('[data-mobile-score="orange"]'),
+  green: root.querySelector<HTMLElement>('[data-mobile-score="green"]'),
 };
 
 let runtime: MatchRuntime | undefined;
@@ -378,7 +423,14 @@ const updateMetricsHud = (session: SessionInfo, fps = 0): void => {
 };
 
 const syncRuntimePause = (): void => {
-  runtime?.setPaused(!isLandscape || resultModalOpen || (countdownActive && countdownMode === 'practice'));
+  runtime?.setPaused(!isLandscape || resultModalOpen || matchFinished || (countdownActive && countdownMode === 'practice'));
+};
+
+const resetMatchResultState = (): void => {
+  resultModal.classList.remove('visible');
+  resultModal.setAttribute('aria-hidden', 'true');
+  resultModalOpen = false;
+  matchFinished = false;
 };
 
 const setCountdownDisplay = (value: string): void => {
@@ -571,6 +623,12 @@ const normalizeRoomId = (value: string): string => {
 };
 
 const syncLobbyPresentation = (session: SessionInfo): void => {
+  if (matchFinished) {
+    hideLobbyOverlay();
+    stopNetworkCountdownVisual();
+    return;
+  }
+
   if (session.mode === 'practice') {
     if (session.lobbyState === 'waiting') {
       cancelPracticeCountdown();
@@ -604,6 +662,10 @@ runtime = new MatchRuntime({
   onStatus: (message) => setStatus(message),
   onSession: (session) => {
     currentSessionInfo = session;
+    const resultSnapshot = runtime?.getAuthoritativeSnapshot();
+    if (resultSnapshot) {
+      maybeShowMatchResult(resultSnapshot);
+    }
     modeValue.textContent = session.mode.toUpperCase();
     playerValue.textContent = PLAYER_DEFINITIONS[session.localPlayerId].label;
     roomValue.textContent = session.roomId ?? 'LOCAL';
@@ -671,7 +733,7 @@ const formatMatchClock = (snapshot: GameSnapshot): string => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 
-const getWinnerSummary = (snapshot: GameSnapshot): { winnerText: string; summaryText: string } => {
+function getWinnerSummary(snapshot: GameSnapshot): { winnerText: string; summaryText: string } {
   const activePlayers =
     currentSessionInfo?.mode === 'practice'
       ? getActivePlayerIds(currentSessionInfo.matchSize)
@@ -702,24 +764,23 @@ const getWinnerSummary = (snapshot: GameSnapshot): { winnerText: string; summary
     winnerText: `${best.player.label} WINS`,
     summaryText: `Conceded the fewest goals with ${best.conceded}.`,
   };
-};
+}
 
-const maybeShowMatchResult = (snapshot: GameSnapshot): void => {
-  const elapsedMs = Math.min(MATCH_DURATION_MS, Math.round(snapshot.tick * (1000 / SIMULATION_HZ)));
+function maybeShowMatchResult(resultSnapshot: GameSnapshot): void {
+  const elapsedMs = Math.min(MATCH_DURATION_MS, Math.round(resultSnapshot.tick * (1000 / SIMULATION_HZ)));
   if (elapsedMs < MATCH_DURATION_MS || matchFinished) {
     return;
   }
 
   matchFinished = true;
-  const result = getWinnerSummary(snapshot);
-  resultWinner.textContent = result.winnerText;
-  resultSummary.textContent = result.summaryText;
-  resultModal.classList.add('visible');
-  resultModal.setAttribute('aria-hidden', 'false');
+  const result = getWinnerSummary(resultSnapshot);
+  resultWinner!.textContent = result.winnerText;
+  resultSummary!.textContent = result.summaryText;
+  resultModal!.classList.add('visible');
+  resultModal!.setAttribute('aria-hidden', 'false');
   resultModalOpen = true;
-  runtime?.leaveSession();
   syncRuntimePause();
-};
+}
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -766,12 +827,18 @@ const runStartCountdown = async (): Promise<void> => {
 };
 
 const setScoreboard = (snapshot: GameSnapshot): void => {
-  matchClock.textContent = formatMatchClock(snapshot);
-  maybeShowMatchResult(snapshot);
+  const formattedClock = formatMatchClock(snapshot);
+  matchClock.textContent = formattedClock;
+  mobileMatchClock.textContent = formattedClock;
+  maybeShowMatchResult(runtime?.getAuthoritativeSnapshot() ?? snapshot);
   scoreValues.white!.textContent = String(snapshot.score.white);
   scoreValues.blue!.textContent = String(snapshot.score.blue);
   scoreValues.orange!.textContent = String(snapshot.score.orange);
   scoreValues.green!.textContent = String(snapshot.score.green);
+  mobileScoreValues.white!.textContent = String(snapshot.score.white);
+  mobileScoreValues.blue!.textContent = String(snapshot.score.blue);
+  mobileScoreValues.orange!.textContent = String(snapshot.score.orange);
+  mobileScoreValues.green!.textContent = String(snapshot.score.green);
 
   const rankedCards = [...scoreCards].sort((left, right) => {
     const leftScore = snapshot.score[left.definition.key];
@@ -789,19 +856,24 @@ const setScoreboard = (snapshot: GameSnapshot): void => {
   const leaderScore =
     activeRankedCards.length > 0 ? snapshot.score[activeRankedCards[0].definition.key] : Number.POSITIVE_INFINITY;
 
-  scoreCards.forEach((entry) => {
-    const visible = visiblePlayers.includes(entry.definition.id);
-    entry.card.hidden = !visible;
-    if (!visible) {
-      entry.card.classList.remove('leader');
-      entry.card.dataset.rank = '';
-      return;
-    }
+  const applyScoreCardState = (cards: typeof scoreCards): void => {
+    cards.forEach((entry) => {
+      const visible = visiblePlayers.includes(entry.definition.id);
+      entry.card.hidden = !visible;
+      if (!visible) {
+        entry.card.classList.remove('leader');
+        entry.card.dataset.rank = '';
+        return;
+      }
 
-    const rank = activeRankedCards.findIndex((candidate) => candidate.definition.id === entry.definition.id);
-    entry.card.dataset.rank = String(rank + 1);
-    entry.card.classList.toggle('leader', snapshot.score[entry.definition.key] === leaderScore);
-  });
+      const rank = activeRankedCards.findIndex((candidate) => candidate.definition.id === entry.definition.id);
+      entry.card.dataset.rank = String(rank + 1);
+      entry.card.classList.toggle('leader', snapshot.score[entry.definition.key] === leaderScore);
+    });
+  };
+
+  applyScoreCardState(scoreCards);
+  applyScoreCardState(mobileScoreCards);
 
   const totalScore = snapshot.score.white + snapshot.score.blue + snapshot.score.orange + snapshot.score.green;
   if (totalScore !== lastGoalTotal) {
@@ -969,6 +1041,7 @@ const submitSessionDialog = async (): Promise<void> => {
     if (sessionDialogMode === 'practice') {
       const matchSize = normalizeMatchSize(sessionMatchSizeSelect.value);
       lastMatchSize = matchSize;
+      resetMatchResultState();
       runtime.startPractice(matchSize);
       sessionModalFeedback.dataset.state = 'success';
       sessionModalFeedback.textContent = 'Practice is live.';
@@ -982,6 +1055,8 @@ const submitSessionDialog = async (): Promise<void> => {
       const matchSize = normalizeMatchSize(sessionMatchSizeSelect.value);
       lastMatchSize = matchSize;
       await runtime.startHost(signalUrl, roomId, matchSize);
+      resetMatchResultState();
+      syncRuntimePause();
       sessionModalFeedback.dataset.state = 'success';
       sessionModalFeedback.textContent = `Connected. Room ${roomId} is ready. Waiting for players.`;
       closeSessionDialog();
@@ -990,6 +1065,8 @@ const submitSessionDialog = async (): Promise<void> => {
       const signalUrl = getConfiguredSignalUrl();
       const roomId = normalizeRoomId(sessionRoomIdInput.value);
       await runtime.startClient(signalUrl, roomId);
+      resetMatchResultState();
+      syncRuntimePause();
       sessionModalFeedback.dataset.state = 'success';
       sessionModalFeedback.textContent = `Connected. Joined room ${roomId}. Waiting for the room to fill.`;
       closeSessionDialog();

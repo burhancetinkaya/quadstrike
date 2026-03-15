@@ -6,6 +6,7 @@ export interface PeerLinkCallbacks {
   onSignal: (signal: unknown) => void;
   onInputPacket: (input: InputFrame) => void;
   onStatePacket: (snapshot: GameSnapshot, receivedAt: number) => void;
+  onRoundTripTime: (roundTripMs: number | null) => void;
   onOpen: () => void;
   onClose: () => void;
   onError: (message: string) => void;
@@ -41,6 +42,8 @@ export class PeerLink {
   private channel: RTCDataChannel | null = null;
 
   private readonly pendingCandidates: RTCIceCandidateInit[] = [];
+
+  private roundTripPollTimer: number | null = null;
 
   constructor(
     private readonly initiator: boolean,
@@ -137,6 +140,7 @@ export class PeerLink {
   }
 
   close(): void {
+    this.stopRoundTripPolling();
     this.channel?.close();
     this.connection.close();
   }
@@ -144,8 +148,14 @@ export class PeerLink {
   private attachChannel(channel: RTCDataChannel): void {
     this.channel = channel;
     this.channel.binaryType = 'arraybuffer';
-    this.channel.addEventListener('open', () => this.callbacks.onOpen());
-    this.channel.addEventListener('close', () => this.callbacks.onClose());
+    this.channel.addEventListener('open', () => {
+      this.startRoundTripPolling();
+      this.callbacks.onOpen();
+    });
+    this.channel.addEventListener('close', () => {
+      this.stopRoundTripPolling();
+      this.callbacks.onClose();
+    });
     this.channel.addEventListener('error', () => this.callbacks.onError('Data channel error.'));
     this.channel.addEventListener('message', async (event) => {
       const payload = await resolveBinaryPayload(event.data);
@@ -161,5 +171,58 @@ export class PeerLink {
         this.callbacks.onStatePacket(deserializeStatePacket(payload), performance.now());
       }
     });
+  }
+
+  private startRoundTripPolling(): void {
+    this.stopRoundTripPolling();
+    void this.pollRoundTripTime();
+    this.roundTripPollTimer = window.setInterval(() => {
+      void this.pollRoundTripTime();
+    }, 1000);
+  }
+
+  private stopRoundTripPolling(): void {
+    if (this.roundTripPollTimer !== null) {
+      window.clearInterval(this.roundTripPollTimer);
+      this.roundTripPollTimer = null;
+    }
+  }
+
+  private async pollRoundTripTime(): Promise<void> {
+    if (this.connection.connectionState === 'closed') {
+      return;
+    }
+
+    try {
+      const report = await this.connection.getStats();
+      let fallbackRoundTripMs: number | null = null;
+      let preferredRoundTripMs: number | null = null;
+
+      report.forEach((stat) => {
+        if (stat.type !== 'candidate-pair') {
+          return;
+        }
+
+        const pair = stat as RTCStats & {
+          currentRoundTripTime?: number;
+          nominated?: boolean;
+          selected?: boolean;
+          state?: string;
+        };
+        if (typeof pair.currentRoundTripTime !== 'number') {
+          return;
+        }
+
+        const roundTripMs = pair.currentRoundTripTime * 1000;
+        fallbackRoundTripMs ??= roundTripMs;
+        if (pair.nominated || pair.selected || pair.state === 'succeeded') {
+          preferredRoundTripMs = roundTripMs;
+        }
+      });
+
+      this.callbacks.onRoundTripTime(preferredRoundTripMs ?? fallbackRoundTripMs);
+    } catch {
+      this.callbacks.onRoundTripTime(null);
+    }
   }
 }

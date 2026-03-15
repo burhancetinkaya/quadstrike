@@ -145,6 +145,14 @@ export class MatchRuntime {
     return this.renderSnapshot;
   }
 
+  getAuthoritativeSnapshot(): GameSnapshot {
+    if (this.sessionInfo.mode === 'client') {
+      return this.replica.getLatestSnapshot() ?? this.lastReceivedSnapshot ?? this.renderSnapshot;
+    }
+
+    return this.renderSnapshot;
+  }
+
   getSessionInfo(): SessionInfo {
     return {
       ...this.sessionInfo,
